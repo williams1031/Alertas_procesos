@@ -578,57 +578,10 @@ def send_via_resend(
             raise ValueError(f"Resend fallo (HTTP {response.status_code}): {detail}")
 
 
-def send_via_brevo(
-    api_key: str,
-    sender_email: str,
-    to_email: str,
-    subject: str,
-    body_text: str,
-    sender_name: str | None = None,
-    attachments: list[dict[str, bytes | str]] | None = None,
-) -> None:
-    sender_payload: dict[str, str] = {"email": sender_email}
-    if sender_name:
-        sender_payload["name"] = sender_name
-
-    payload: dict[str, Any] = {
-        "sender": sender_payload,
-        "to": [{"email": to_email}],
-        "subject": subject,
-        "textContent": body_text,
-    }
-    if attachments:
-        encoded_attachments: list[dict[str, str]] = []
-        for item in attachments:
-            filename = str(item["filename"])
-            raw_bytes = item["content_bytes"]
-            if isinstance(raw_bytes, str):
-                raw_bytes = raw_bytes.encode("utf-8")
-            encoded = base64.b64encode(raw_bytes).decode("ascii")
-            encoded_attachments.append({"name": filename, "content": encoded})
-        payload["attachment"] = encoded_attachments
-
-    headers = {
-        "api-key": api_key,
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
-    with httpx.Client(timeout=30.0) as client:
-        response = client.post("https://api.brevo.com/v3/smtp/email", headers=headers, json=payload)
-        if response.status_code >= 400:
-            detail = response.text[:400]
-            raise ValueError(f"Brevo fallo (HTTP {response.status_code}): {detail}")
-
-
 def send_report_email(records: list[dict[str, Any]]) -> dict[str, Any]:
     mail_provider = (os.getenv("ALERT_MAIL_PROVIDER") or "").strip().lower()
-    if mail_provider not in {"smtp", "resend", "brevo"}:
-        if (os.getenv("BREVO_API_KEY") or "").strip():
-            mail_provider = "brevo"
-        elif (os.getenv("RESEND_API_KEY") or "").strip():
-            mail_provider = "resend"
-        else:
-            mail_provider = "smtp"
+    if mail_provider not in {"smtp", "resend"}:
+        mail_provider = "resend" if (os.getenv("RESEND_API_KEY") or "").strip() else "smtp"
 
     smtp_host = (os.getenv("ALERT_SMTP_HOST") or "").strip()
     smtp_port = int((os.getenv("ALERT_SMTP_PORT") or "587").strip())
@@ -637,15 +590,10 @@ def send_report_email(records: list[dict[str, Any]]) -> dict[str, Any]:
     sender_email = (os.getenv("ALERT_EMAIL_FROM") or "").strip() or smtp_user
     use_tls = (os.getenv("ALERT_SMTP_USE_TLS") or "1").strip().lower() in {"1", "true", "yes", "si", "on"}
     resend_api_key = (os.getenv("RESEND_API_KEY") or "").strip()
-    brevo_api_key = (os.getenv("BREVO_API_KEY") or "").strip()
-    brevo_sender_name = (os.getenv("BREVO_SENDER_NAME") or "").strip()
 
     if mail_provider == "resend":
         if not resend_api_key or not sender_email:
             raise ValueError("Configura RESEND_API_KEY y ALERT_EMAIL_FROM para usar proveedor Resend.")
-    elif mail_provider == "brevo":
-        if not brevo_api_key or not sender_email:
-            raise ValueError("Configura BREVO_API_KEY y ALERT_EMAIL_FROM para usar proveedor Brevo.")
     else:
         if not smtp_host or not smtp_user or not smtp_password or not sender_email:
             raise ValueError(
@@ -789,7 +737,7 @@ def send_report_email(records: list[dict[str, Any]]) -> dict[str, Any]:
                 server.send_message(personal_msg)
                 sent_personal += 1
                 personal_recipients.append(f"{responsable_name} <{target_email}>")
-    elif mail_provider == "resend":
+    else:
         send_via_resend(
             api_key=resend_api_key,
             sender_email=sender_email,
@@ -849,75 +797,6 @@ def send_report_email(records: list[dict[str, Any]]) -> dict[str, Any]:
             send_via_resend(
                 api_key=resend_api_key,
                 sender_email=sender_email,
-                to_email=target_email,
-                subject=f"Alertas asignadas - {responsable_name}",
-                body_text="\n".join(personal_lines),
-                attachments=[{"filename": personal_attachment, "content_bytes": personal_buffer.getvalue()}],
-            )
-            sent_personal += 1
-            personal_recipients.append(f"{responsable_name} <{target_email}>")
-    else:
-        send_via_brevo(
-            api_key=brevo_api_key,
-            sender_email=sender_email,
-            sender_name=brevo_sender_name or None,
-            to_email=REPORT_TO_EMAIL,
-            subject=general_subject,
-            body_text=body,
-            attachments=[{"filename": attachment_name, "content_bytes": excel_bytes}],
-        )
-
-        for responsable, group in df.groupby("Responsable", dropna=False):
-            responsable_name = str(responsable).strip() or "Sin responsable"
-            target_email = normalized_mapping.get(normalize_text(responsable_name), "").strip()
-            if not target_email:
-                no_email_personal += 1
-                skipped_personal += 1
-                continue
-            if "@" not in target_email or "." not in target_email.split("@")[-1]:
-                invalid_email_personal += 1
-                skipped_personal += 1
-                continue
-
-            personal_lines = [
-                f"Cordial saludo, {responsable_name}.",
-                "",
-                "Se remite su informe personalizado de alertas pendientes.",
-                f"Total de alertas asignadas: {len(group)}.",
-                "",
-                "Detalle:",
-            ]
-            for _, row in group.sort_values(by=["DiasInt", "Tipo"], ascending=[True, True]).head(25).iterrows():
-                personal_lines.append(
-                    f"  - Cuenta {row['Cuenta Contrato']} | {row['Tipo']} | {row['Ciudad']} | "
-                    f"Vence: {row['Fecha_Vencimiento']} | Dias: {row['DiasInt']}"
-                )
-            if len(group) > 25:
-                personal_lines.append(f"  - ... {len(group) - 25} alertas adicionales (ver adjunto).")
-            personal_lines.extend(
-                [
-                    "",
-                    "Adjunto se incluye su consolidado en Excel.",
-                    "Mensaje generado automaticamente por el sistema de alertas.",
-                ]
-            )
-
-            personal_df = group.copy().rename(columns={"DiasInt": "Dias"})
-            personal_buffer = BytesIO()
-            personal_df.to_excel(personal_buffer, index=False, sheet_name="MisAlertas", engine="openpyxl")
-            safe_name = (
-                normalize_text(responsable_name)
-                .replace(" ", "_")
-                .replace("/", "_")
-                .replace("\\", "_")
-                .replace(":", "_")
-            )
-            personal_attachment = f"alertas_{safe_name}_{time.strftime('%Y%m%d')}.xlsx"
-
-            send_via_brevo(
-                api_key=brevo_api_key,
-                sender_email=sender_email,
-                sender_name=brevo_sender_name or None,
                 to_email=target_email,
                 subject=f"Alertas asignadas - {responsable_name}",
                 body_text="\n".join(personal_lines),

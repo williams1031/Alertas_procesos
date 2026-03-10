@@ -27,9 +27,7 @@ API principal:
 
 Variables backend (ver `backend/.env.example`):
 - `CORS_ALLOWED_ORIGINS`: `*` o lista separada por comas
-- `ALERT_MAIL_PROVIDER`: `brevo` (recomendado en Render free), `resend` o `smtp`
-- `BREVO_API_KEY`: obligatorio si `ALERT_MAIL_PROVIDER=brevo`
-- `BREVO_SENDER_NAME`: opcional, nombre visible del remitente en Brevo
+- `ALERT_MAIL_PROVIDER`: `resend` (recomendado en Render free) o `smtp`
 - `RESEND_API_KEY`: obligatorio si `ALERT_MAIL_PROVIDER=resend`
 - `ALERT_EMAIL_FROM`: remitente (en Resend debe ser dominio remitente permitido)
 - `ALERT_SMTP_*`: opcional, solo si `ALERT_MAIL_PROVIDER=smtp`
@@ -89,10 +87,8 @@ Este repo incluye `render.yaml` en la raiz.
 2. Selecciona este repositorio GitHub.
 3. Render detecta `render.yaml` y crea `alertas-procesos-api`.
 4. En variables sensibles completa:
-   - `ALERT_MAIL_PROVIDER=brevo`
-   - `BREVO_API_KEY`
-   - `BREVO_SENDER_NAME` (opcional)
-   - `RESEND_API_KEY` (solo si usas resend)
+   - `ALERT_MAIL_PROVIDER=resend`
+   - `RESEND_API_KEY`
    - `ALERT_EMAIL_FROM`
    - `MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET` (si usas SharePoint privado)
 5. Despliega.
