@@ -27,10 +27,7 @@ API principal:
 
 Variables backend (ver `backend/.env.example`):
 - `CORS_ALLOWED_ORIGINS`: `*` o lista separada por comas
-- `ALERT_MAIL_PROVIDER`: `resend` (recomendado en Render free) o `smtp`
-- `RESEND_API_KEY`: obligatorio si `ALERT_MAIL_PROVIDER=resend`
-- `ALERT_EMAIL_FROM`: remitente (en Resend debe ser dominio remitente permitido)
-- `ALERT_SMTP_*`: opcional, solo si `ALERT_MAIL_PROVIDER=smtp`
+- `ALERT_SMTP_*`: envio de informe general + correos personalizados por responsable
 - `MS_*`: opcional para SharePoint privado por Graph
 
 ### SharePoint privado con Microsoft Graph
@@ -87,8 +84,8 @@ Este repo incluye `render.yaml` en la raiz.
 2. Selecciona este repositorio GitHub.
 3. Render detecta `render.yaml` y crea `alertas-procesos-api`.
 4. En variables sensibles completa:
-   - `ALERT_MAIL_PROVIDER=resend`
-   - `RESEND_API_KEY`
+   - `ALERT_SMTP_USER`
+   - `ALERT_SMTP_PASSWORD` (app password de Gmail)
    - `ALERT_EMAIL_FROM`
    - `MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET` (si usas SharePoint privado)
 5. Despliega.

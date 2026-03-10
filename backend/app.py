@@ -542,64 +542,19 @@ def build_report_records(all_alerts: pd.DataFrame) -> list[dict[str, Any]]:
     return out.to_dict(orient="records")
 
 
-def send_via_resend(
-    api_key: str,
-    sender_email: str,
-    to_email: str,
-    subject: str,
-    body_text: str,
-    attachments: list[dict[str, bytes | str]] | None = None,
-) -> None:
-    payload: dict[str, Any] = {
-        "from": sender_email,
-        "to": [to_email],
-        "subject": subject,
-        "text": body_text,
-    }
-    if attachments:
-        encoded_attachments: list[dict[str, str]] = []
-        for item in attachments:
-            filename = str(item["filename"])
-            raw_bytes = item["content_bytes"]
-            if isinstance(raw_bytes, str):
-                raw_bytes = raw_bytes.encode("utf-8")
-            encoded = base64.b64encode(raw_bytes).decode("ascii")
-            encoded_attachments.append({"filename": filename, "content": encoded})
-        payload["attachments"] = encoded_attachments
-
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    with httpx.Client(timeout=30.0) as client:
-        response = client.post("https://api.resend.com/emails", headers=headers, json=payload)
-        if response.status_code >= 400:
-            detail = response.text[:400]
-            raise ValueError(f"Resend fallo (HTTP {response.status_code}): {detail}")
-
-
 def send_report_email(records: list[dict[str, Any]]) -> dict[str, Any]:
-    mail_provider = (os.getenv("ALERT_MAIL_PROVIDER") or "").strip().lower()
-    if mail_provider not in {"smtp", "resend"}:
-        mail_provider = "resend" if (os.getenv("RESEND_API_KEY") or "").strip() else "smtp"
-
     smtp_host = (os.getenv("ALERT_SMTP_HOST") or "").strip()
     smtp_port = int((os.getenv("ALERT_SMTP_PORT") or "587").strip())
     smtp_user = (os.getenv("ALERT_SMTP_USER") or "").strip()
     smtp_password = (os.getenv("ALERT_SMTP_PASSWORD") or "").strip()
-    sender_email = (os.getenv("ALERT_EMAIL_FROM") or "").strip() or smtp_user
+    smtp_from = (os.getenv("ALERT_EMAIL_FROM") or "").strip() or smtp_user
     use_tls = (os.getenv("ALERT_SMTP_USE_TLS") or "1").strip().lower() in {"1", "true", "yes", "si", "on"}
-    resend_api_key = (os.getenv("RESEND_API_KEY") or "").strip()
 
-    if mail_provider == "resend":
-        if not resend_api_key or not sender_email:
-            raise ValueError("Configura RESEND_API_KEY y ALERT_EMAIL_FROM para usar proveedor Resend.")
-    else:
-        if not smtp_host or not smtp_user or not smtp_password or not sender_email:
-            raise ValueError(
-                "Credenciales SMTP incompletas. Configure ALERT_SMTP_HOST, ALERT_SMTP_USER, "
-                "ALERT_SMTP_PASSWORD y ALERT_EMAIL_FROM."
-            )
+    if not smtp_host or not smtp_user or not smtp_password or not smtp_from:
+        raise ValueError(
+            "Credenciales SMTP incompletas. Configure ALERT_SMTP_HOST, ALERT_SMTP_USER, "
+            "ALERT_SMTP_PASSWORD y ALERT_EMAIL_FROM."
+        )
 
     if not records:
         raise ValueError("No hay registros para enviar en el informe.")
@@ -643,7 +598,17 @@ def send_report_email(records: list[dict[str, Any]]) -> dict[str, Any]:
     export_df.to_excel(excel_buffer, index=False, sheet_name="Informe", engine="openpyxl")
     excel_bytes = excel_buffer.getvalue()
 
-    general_subject = "Informe de alertas"
+    msg = EmailMessage()
+    msg["Subject"] = "Informe de alertas"
+    msg["From"] = smtp_from
+    msg["To"] = REPORT_TO_EMAIL
+    msg.set_content(body)
+    msg.add_attachment(
+        excel_bytes,
+        maintype="application",
+        subtype="vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=attachment_name,
+    )
 
     sent_personal = 0
     skipped_personal = 0
@@ -651,101 +616,17 @@ def send_report_email(records: list[dict[str, Any]]) -> dict[str, Any]:
     invalid_email_personal = 0
     personal_recipients: list[str] = []
 
-    # Correos personalizados por responsable (solo sus propias alertas).
-    mapping = load_email_mapping()
-    normalized_mapping: dict[str, str] = {
-        normalize_text(k): str(v).strip() for k, v in mapping.items() if str(k).strip()
-    }
+    with smtplib.SMTP(smtp_host, smtp_port) as server:
+        if use_tls:
+            server.starttls()
+        server.login(smtp_user, smtp_password)
+        server.send_message(msg)
 
-    if mail_provider == "smtp":
-        msg = EmailMessage()
-        msg["Subject"] = general_subject
-        msg["From"] = sender_email
-        msg["To"] = REPORT_TO_EMAIL
-        msg.set_content(body)
-        msg.add_attachment(
-            excel_bytes,
-            maintype="application",
-            subtype="vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            filename=attachment_name,
-        )
-
-        with smtplib.SMTP(smtp_host, smtp_port) as server:
-            if use_tls:
-                server.starttls()
-            server.login(smtp_user, smtp_password)
-            server.send_message(msg)
-
-            for responsable, group in df.groupby("Responsable", dropna=False):
-                responsable_name = str(responsable).strip() or "Sin responsable"
-                target_email = normalized_mapping.get(normalize_text(responsable_name), "").strip()
-                if not target_email:
-                    no_email_personal += 1
-                    skipped_personal += 1
-                    continue
-                if "@" not in target_email or "." not in target_email.split("@")[-1]:
-                    invalid_email_personal += 1
-                    skipped_personal += 1
-                    continue
-
-                personal_lines = [
-                    f"Cordial saludo, {responsable_name}.",
-                    "",
-                    "Se remite su informe personalizado de alertas pendientes.",
-                    f"Total de alertas asignadas: {len(group)}.",
-                    "",
-                    "Detalle:",
-                ]
-                for _, row in group.sort_values(by=["DiasInt", "Tipo"], ascending=[True, True]).head(25).iterrows():
-                    personal_lines.append(
-                        f"  - Cuenta {row['Cuenta Contrato']} | {row['Tipo']} | {row['Ciudad']} | "
-                        f"Vence: {row['Fecha_Vencimiento']} | Dias: {row['DiasInt']}"
-                    )
-                if len(group) > 25:
-                    personal_lines.append(f"  - ... {len(group) - 25} alertas adicionales (ver adjunto).")
-                personal_lines.extend(
-                    [
-                        "",
-                        "Adjunto se incluye su consolidado en Excel.",
-                        "Mensaje generado automaticamente por el sistema de alertas.",
-                    ]
-                )
-
-                personal_df = group.copy().rename(columns={"DiasInt": "Dias"})
-                personal_buffer = BytesIO()
-                personal_df.to_excel(personal_buffer, index=False, sheet_name="MisAlertas", engine="openpyxl")
-                safe_name = (
-                    normalize_text(responsable_name)
-                    .replace(" ", "_")
-                    .replace("/", "_")
-                    .replace("\\", "_")
-                    .replace(":", "_")
-                )
-                personal_attachment = f"alertas_{safe_name}_{time.strftime('%Y%m%d')}.xlsx"
-
-                personal_msg = EmailMessage()
-                personal_msg["Subject"] = f"Alertas asignadas - {responsable_name}"
-                personal_msg["From"] = sender_email
-                personal_msg["To"] = target_email
-                personal_msg.set_content("\n".join(personal_lines))
-                personal_msg.add_attachment(
-                    personal_buffer.getvalue(),
-                    maintype="application",
-                    subtype="vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    filename=personal_attachment,
-                )
-                server.send_message(personal_msg)
-                sent_personal += 1
-                personal_recipients.append(f"{responsable_name} <{target_email}>")
-    else:
-        send_via_resend(
-            api_key=resend_api_key,
-            sender_email=sender_email,
-            to_email=REPORT_TO_EMAIL,
-            subject=general_subject,
-            body_text=body,
-            attachments=[{"filename": attachment_name, "content_bytes": excel_bytes}],
-        )
+        # Correos personalizados por responsable (solo sus propias alertas).
+        mapping = load_email_mapping()
+        normalized_mapping: dict[str, str] = {
+            normalize_text(k): str(v).strip() for k, v in mapping.items() if str(k).strip()
+        }
 
         for responsable, group in df.groupby("Responsable", dropna=False):
             responsable_name = str(responsable).strip() or "Sin responsable"
@@ -794,14 +675,18 @@ def send_report_email(records: list[dict[str, Any]]) -> dict[str, Any]:
             )
             personal_attachment = f"alertas_{safe_name}_{time.strftime('%Y%m%d')}.xlsx"
 
-            send_via_resend(
-                api_key=resend_api_key,
-                sender_email=sender_email,
-                to_email=target_email,
-                subject=f"Alertas asignadas - {responsable_name}",
-                body_text="\n".join(personal_lines),
-                attachments=[{"filename": personal_attachment, "content_bytes": personal_buffer.getvalue()}],
+            personal_msg = EmailMessage()
+            personal_msg["Subject"] = f"Alertas asignadas - {responsable_name}"
+            personal_msg["From"] = smtp_from
+            personal_msg["To"] = target_email
+            personal_msg.set_content("\n".join(personal_lines))
+            personal_msg.add_attachment(
+                personal_buffer.getvalue(),
+                maintype="application",
+                subtype="vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                filename=personal_attachment,
             )
+            server.send_message(personal_msg)
             sent_personal += 1
             personal_recipients.append(f"{responsable_name} <{target_email}>")
 
@@ -810,7 +695,6 @@ def send_report_email(records: list[dict[str, Any]]) -> dict[str, Any]:
         "subject": "Informe de alertas",
         "rows": len(df),
         "attachment": attachment_name,
-        "provider": mail_provider,
         "personal_sent": sent_personal,
         "personal_skipped": skipped_personal,
         "personal_missing_email": no_email_personal,
