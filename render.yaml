@@ -11,7 +11,11 @@ services:
       - key: CORS_ALLOWED_ORIGINS
         value: "*"
       - key: ALERT_MAIL_PROVIDER
-        value: resend
+        value: brevo
+      - key: BREVO_API_KEY
+        sync: false
+      - key: BREVO_SENDER_NAME
+        value: Alertas Procesos
       - key: RESEND_API_KEY
         sync: false
       - key: ALERT_SMTP_HOST
