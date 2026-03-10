@@ -10,6 +10,10 @@ services:
     envVars:
       - key: CORS_ALLOWED_ORIGINS
         value: "*"
+      - key: ALERT_MAIL_PROVIDER
+        value: resend
+      - key: RESEND_API_KEY
+        sync: false
       - key: ALERT_SMTP_HOST
         value: smtp.gmail.com
       - key: ALERT_SMTP_PORT
