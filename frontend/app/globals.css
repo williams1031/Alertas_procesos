@@ -1,0 +1,61 @@
+@import url("https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  @apply bg-soft text-ink antialiased;
+  background: #f7faf9;
+  min-height: 100vh;
+  transition:
+    background-color 420ms cubic-bezier(0.22, 1, 0.36, 1),
+    color 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.card {
+  @apply rounded-2xl border border-white/60 bg-white/85 backdrop-blur shadow-lg;
+  transition:
+    background-color 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    color 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 360ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 360ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.dark-theme body {
+  color: #e5e7eb;
+  background: #0f172a;
+}
+
+.dark-theme .card {
+  border-color: rgba(71, 85, 105, 0.55);
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.9), rgba(15, 23, 42, 0.8));
+  box-shadow: 0 24px 50px -20px rgba(0, 0, 0, 0.65);
+}
+
+button,
+input,
+table,
+thead,
+tbody,
+tr,
+th,
+td,
+section,
+p,
+h1,
+h2,
+h3,
+label {
+  transition:
+    background-color 280ms cubic-bezier(0.22, 1, 0.36, 1),
+    color 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 280ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}

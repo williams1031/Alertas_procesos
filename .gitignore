@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+.env.*
+
+frontend/node_modules/
+frontend/.next/
+
+salida/
+backend/salida/
