@@ -26,6 +26,14 @@ GRAPH_TOKEN_CACHE: dict[str, Any] = {"access_token": None, "expires_at": 0}
 REPORT_TO_EMAIL = "wrodriguezg@acueducto.com.co"
 
 
+def get_cors_origins() -> list[str]:
+    raw = (os.getenv("CORS_ALLOWED_ORIGINS") or "*").strip()
+    if raw == "*":
+        return ["*"]
+    origins = [item.strip() for item in raw.split(",") if item.strip()]
+    return origins or ["*"]
+
+
 app = FastAPI(
     title="Alertas Procesos API",
     version="2.0.0",
@@ -34,7 +42,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=get_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -21,6 +21,14 @@ API principal:
 - `GET /api/health`
 - `POST /api/sharepoint/diagnostic` con `form-data`:
   - `sharepoint_url`: valida configuracion de Graph y prueba descarga del archivo
+- `GET /api/responsables`
+- `POST /api/responsables/save`
+- `POST /api/report/send`
+
+Variables backend (ver `backend/.env.example`):
+- `CORS_ALLOWED_ORIGINS`: `*` o lista separada por comas
+- `ALERT_SMTP_*`: envio de informe general + correos personalizados por responsable
+- `MS_*`: opcional para SharePoint privado por Graph
 
 ### SharePoint privado con Microsoft Graph
 
@@ -66,13 +74,35 @@ El frontend queda en `http://localhost:3000` y usa `NEXT_PUBLIC_API_URL` para co
    - preview de datos fuente
    - preview de alertas
 
-## 4) Despliegue recomendado
+## 4) Despliegue recomendado (listo para usar)
 
-- Frontend: Vercel (Next.js nativo).
-- Backend: Render/Railway/Fly.io con comando:
+### Backend en Render
 
-```bash
-uvicorn backend.app:app --host 0.0.0.0 --port $PORT
-```
+Este repo incluye `render.yaml` en la raiz.
 
-Ajusta CORS en `backend/app.py` para dominios concretos en produccion.
+1. En Render: **New + > Blueprint**
+2. Selecciona este repositorio GitHub.
+3. Render detecta `render.yaml` y crea `alertas-procesos-api`.
+4. En variables sensibles completa:
+   - `ALERT_SMTP_USER`
+   - `ALERT_SMTP_PASSWORD` (app password de Gmail)
+   - `ALERT_EMAIL_FROM`
+   - `MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET` (si usas SharePoint privado)
+5. Despliega.
+6. Verifica salud: `https://TU_BACKEND.onrender.com/api/health`
+
+### Frontend en Vercel
+
+1. En Vercel: **Add New Project** y selecciona este repo.
+2. Root Directory: `frontend`
+3. Variable de entorno:
+   - `NEXT_PUBLIC_API_URL=https://TU_BACKEND.onrender.com`
+4. Deploy.
+
+### CORS en produccion
+
+En Render, define `CORS_ALLOWED_ORIGINS` con el dominio de Vercel:
+
+`https://TU_APP.vercel.app`
+
+Si necesitas mas de uno, separalos por coma.
