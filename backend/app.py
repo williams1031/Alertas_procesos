@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import base64
 import os
-import smtplib
 import time
 import unicodedata
-from email.message import EmailMessage
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -15,15 +13,12 @@ import httpx
 import pandas as pd
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 
 
 FIVE_MONTH_DAYS = 150
 DEFAULT_SHEET = "Procesos Adminis_Penal"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-MAPPING_FILE = PROJECT_ROOT / "responsables_correos.csv"
 GRAPH_TOKEN_CACHE: dict[str, Any] = {"access_token": None, "expires_at": 0}
-REPORT_TO_EMAIL = "wrodriguezg@acueducto.com.co"
 
 
 app = FastAPI(
@@ -109,35 +104,6 @@ def explode_by_responsable(df: pd.DataFrame, responsable_col: str = "Responsable
     work[responsable_col] = work[responsable_col].astype(str).str.strip()
     work = work[work[responsable_col] != ""]
     return work
-
-
-def load_email_mapping() -> dict[str, str]:
-    if not MAPPING_FILE.exists():
-        return {}
-    map_df = pd.read_csv(MAPPING_FILE, encoding="utf-8-sig")
-    map_df.columns = [str(c).strip() for c in map_df.columns]
-    required = {"Responsable", "Correo"}
-    if not required.issubset(set(map_df.columns)):
-        return {}
-    mapping: dict[str, str] = {}
-    for _, row in map_df.dropna(subset=["Responsable"]).iterrows():
-        responsable = str(row["Responsable"]).strip()
-        correo = str(row["Correo"]).strip() if pd.notna(row["Correo"]) else ""
-        if responsable:
-            mapping[responsable] = correo
-    return mapping
-
-
-def save_email_mapping(entries: list[dict[str, str]]) -> None:
-    rows = []
-    for item in entries:
-        responsable = str(item.get("Responsable", "")).strip()
-        correo = str(item.get("Correo", "")).strip()
-        if responsable:
-            rows.append({"Responsable": responsable, "Correo": correo})
-    out_df = pd.DataFrame(rows).drop_duplicates(subset=["Responsable"], keep="last")
-    out_df = out_df.sort_values(by=["Responsable"], ascending=True)
-    out_df.to_csv(MAPPING_FILE, index=False, encoding="utf-8-sig")
 
 
 def build_block(df: pd.DataFrame, required_columns: list[tuple[str, str]], tipo: str, regla: str) -> pd.DataFrame:
@@ -502,199 +468,6 @@ def build_analysis_records(all_alerts: pd.DataFrame) -> list[dict[str, Any]]:
     return out.to_dict(orient="records")
 
 
-def build_report_records(all_alerts: pd.DataFrame) -> list[dict[str, Any]]:
-    if all_alerts.empty:
-        return []
-    work = all_alerts.copy()
-    work["Dias"] = pd.to_numeric(work["Dias"], errors="coerce")
-    work = work[work["Dias"].notna()].copy()
-    work["DiasInt"] = work["Dias"].astype(int)
-    work = explode_by_responsable(work, "Responsable")
-    if work.empty:
-        return []
-
-    for optional_col, default_value in [
-        ("Cuenta Contrato", ""),
-        ("Ciudad", ""),
-        ("Fecha_Vencimiento", None),
-        ("Regla", ""),
-        ("Tipo", ""),
-    ]:
-        if optional_col not in work.columns:
-            work[optional_col] = default_value
-
-    out = work[["Responsable", "Tipo", "Regla", "Cuenta Contrato", "Ciudad", "Fecha_Vencimiento", "DiasInt"]].copy()
-    out["Fecha_Vencimiento"] = pd.to_datetime(out["Fecha_Vencimiento"], errors="coerce").dt.strftime("%Y-%m-%d")
-    out["Responsable"] = out["Responsable"].astype(str).str.strip()
-    out["Tipo"] = out["Tipo"].astype(str).str.strip()
-    out["Regla"] = out["Regla"].astype(str).str.strip()
-    out["Cuenta Contrato"] = out["Cuenta Contrato"].astype(str).str.strip()
-    out["Ciudad"] = out["Ciudad"].astype(str).str.strip()
-    out = out.sort_values(by=["Responsable", "DiasInt", "Tipo"], ascending=[True, True, True])
-    return out.to_dict(orient="records")
-
-
-def send_report_email(records: list[dict[str, Any]]) -> dict[str, Any]:
-    smtp_host = (os.getenv("ALERT_SMTP_HOST") or "").strip()
-    smtp_port = int((os.getenv("ALERT_SMTP_PORT") or "587").strip())
-    smtp_user = (os.getenv("ALERT_SMTP_USER") or "").strip()
-    smtp_password = (os.getenv("ALERT_SMTP_PASSWORD") or "").strip()
-    smtp_from = (os.getenv("ALERT_EMAIL_FROM") or "").strip() or smtp_user
-    use_tls = (os.getenv("ALERT_SMTP_USE_TLS") or "1").strip().lower() in {"1", "true", "yes", "si", "on"}
-
-    if not smtp_host or not smtp_user or not smtp_password or not smtp_from:
-        raise ValueError(
-            "Credenciales SMTP incompletas. Configure ALERT_SMTP_HOST, ALERT_SMTP_USER, "
-            "ALERT_SMTP_PASSWORD y ALERT_EMAIL_FROM."
-        )
-
-    if not records:
-        raise ValueError("No hay registros para enviar en el informe.")
-
-    df = pd.DataFrame(records)
-    for required in ["Responsable", "Tipo", "Cuenta Contrato", "Ciudad", "Fecha_Vencimiento", "DiasInt"]:
-        if required not in df.columns:
-            raise ValueError(f"Falta columna en registros del informe: {required}")
-
-    lines = [
-        "Cordial saludo,",
-        "",
-        "Por medio del presente se remite el informe de alertas con las acciones pendientes identificadas.",
-        "A continuacion se detalla el consolidado por responsable y tipo de alerta:",
-        "",
-    ]
-
-    grouped = df.groupby("Responsable", dropna=False)
-    for responsable, group in grouped:
-        responsable_name = str(responsable).strip() or "Sin responsable"
-        tipo_counts = group["Tipo"].value_counts()
-        tipo_summary = ", ".join([f"{tipo}: {int(count)}" for tipo, count in tipo_counts.items()])
-        lines.append(f"{responsable_name} -> Total alertas: {len(group)} ({tipo_summary})")
-        for _, row in group.head(12).iterrows():
-            lines.append(
-                f"  - Cuenta {row['Cuenta Contrato']} | {row['Tipo']} | {row['Ciudad']} | "
-                f"Vence: {row['Fecha_Vencimiento']} | Dias: {row['DiasInt']}"
-            )
-        if len(group) > 12:
-            lines.append(f"  - ... {len(group) - 12} alertas adicionales")
-        lines.append("")
-
-    lines.append("Este informe se genera automaticamente desde el tablero de control de alertas.")
-    body = "\n".join(lines)
-
-    # Adjunta el consolidado general en formato Excel.
-    export_df = df.copy()
-    export_df = export_df.rename(columns={"DiasInt": "Dias"})
-    attachment_name = f"informe_alertas_{time.strftime('%Y%m%d_%H%M%S')}.xlsx"
-    excel_buffer = BytesIO()
-    export_df.to_excel(excel_buffer, index=False, sheet_name="Informe", engine="openpyxl")
-    excel_bytes = excel_buffer.getvalue()
-
-    msg = EmailMessage()
-    msg["Subject"] = "Informe de alertas"
-    msg["From"] = smtp_from
-    msg["To"] = REPORT_TO_EMAIL
-    msg.set_content(body)
-    msg.add_attachment(
-        excel_bytes,
-        maintype="application",
-        subtype="vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        filename=attachment_name,
-    )
-
-    sent_personal = 0
-    skipped_personal = 0
-    no_email_personal = 0
-    invalid_email_personal = 0
-    personal_recipients: list[str] = []
-
-    with smtplib.SMTP(smtp_host, smtp_port) as server:
-        if use_tls:
-            server.starttls()
-        server.login(smtp_user, smtp_password)
-        server.send_message(msg)
-
-        # Correos personalizados por responsable (solo sus propias alertas).
-        mapping = load_email_mapping()
-        normalized_mapping: dict[str, str] = {
-            normalize_text(k): str(v).strip() for k, v in mapping.items() if str(k).strip()
-        }
-
-        for responsable, group in df.groupby("Responsable", dropna=False):
-            responsable_name = str(responsable).strip() or "Sin responsable"
-            target_email = normalized_mapping.get(normalize_text(responsable_name), "").strip()
-            if not target_email:
-                no_email_personal += 1
-                skipped_personal += 1
-                continue
-            if "@" not in target_email or "." not in target_email.split("@")[-1]:
-                invalid_email_personal += 1
-                skipped_personal += 1
-                continue
-
-            personal_lines = [
-                f"Cordial saludo, {responsable_name}.",
-                "",
-                "Se remite su informe personalizado de alertas pendientes.",
-                f"Total de alertas asignadas: {len(group)}.",
-                "",
-                "Detalle:",
-            ]
-            for _, row in group.sort_values(by=["DiasInt", "Tipo"], ascending=[True, True]).head(25).iterrows():
-                personal_lines.append(
-                    f"  - Cuenta {row['Cuenta Contrato']} | {row['Tipo']} | {row['Ciudad']} | "
-                    f"Vence: {row['Fecha_Vencimiento']} | Dias: {row['DiasInt']}"
-                )
-            if len(group) > 25:
-                personal_lines.append(f"  - ... {len(group) - 25} alertas adicionales (ver adjunto).")
-            personal_lines.extend(
-                [
-                    "",
-                    "Adjunto se incluye su consolidado en Excel.",
-                    "Mensaje generado automaticamente por el sistema de alertas.",
-                ]
-            )
-
-            personal_df = group.copy().rename(columns={"DiasInt": "Dias"})
-            personal_buffer = BytesIO()
-            personal_df.to_excel(personal_buffer, index=False, sheet_name="MisAlertas", engine="openpyxl")
-            safe_name = (
-                normalize_text(responsable_name)
-                .replace(" ", "_")
-                .replace("/", "_")
-                .replace("\\", "_")
-                .replace(":", "_")
-            )
-            personal_attachment = f"alertas_{safe_name}_{time.strftime('%Y%m%d')}.xlsx"
-
-            personal_msg = EmailMessage()
-            personal_msg["Subject"] = f"Alertas asignadas - {responsable_name}"
-            personal_msg["From"] = smtp_from
-            personal_msg["To"] = target_email
-            personal_msg.set_content("\n".join(personal_lines))
-            personal_msg.add_attachment(
-                personal_buffer.getvalue(),
-                maintype="application",
-                subtype="vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                filename=personal_attachment,
-            )
-            server.send_message(personal_msg)
-            sent_personal += 1
-            personal_recipients.append(f"{responsable_name} <{target_email}>")
-
-    return {
-        "to": REPORT_TO_EMAIL,
-        "subject": "Informe de alertas",
-        "rows": len(df),
-        "attachment": attachment_name,
-        "personal_sent": sent_personal,
-        "personal_skipped": skipped_personal,
-        "personal_missing_email": no_email_personal,
-        "personal_invalid_email": invalid_email_personal,
-        "personal_recipients": personal_recipients,
-    }
-
-
 def serialize_for_json(df: pd.DataFrame, limit: int = 30) -> list[dict[str, Any]]:
     sample = df.head(limit).copy()
     for col_name in sample.columns:
@@ -730,7 +503,6 @@ def process_excel_bytes(file_bytes: bytes, sheet_name: str | None) -> dict[str, 
             vals = vals[(vals != "") & (vals.str.lower() != "nan")]
             extra_resp.update(vals.tolist())
     responsables = sorted(set(responsables).union(extra_resp))
-    email_mapping = load_email_mapping()
 
     admin_5m = all_alerts[all_alerts["Tipo"] == "Administrativo"].copy()
     penal_5m = all_alerts[all_alerts["Tipo"] == "Penal"].copy()
@@ -772,7 +544,6 @@ def process_excel_bytes(file_bytes: bytes, sheet_name: str | None) -> dict[str, 
             "five_month_days": FIVE_MONTH_DAYS,
             "pending_liquidacion_alert_day": 30,
             "vencimiento_alert_day": 10,
-            "cc_recipients_rule": "En dia 10 incluir copia a Andrea y jefe (configurable en correo).",
         },
         "sheet_used": target_sheet,
         "available_sheets": available_sheets,
@@ -782,12 +553,10 @@ def process_excel_bytes(file_bytes: bytes, sheet_name: str | None) -> dict[str, 
         "alerts_total_rows": int(len(all_alerts)),
         "alerts_preview": serialize_for_json(all_alerts, limit=60),
         "responsables": responsables,
-        "email_mapping": email_mapping,
         "tableros": boards,
         "status_analysis": build_status_analysis(df),
         "control_dashboard": build_control_dashboard(pending_status_df),
         "analysis_records": build_analysis_records(pending_status_df),
-        "report_records": build_report_records(all_alerts),
     }
 
 
@@ -884,19 +653,6 @@ def graph_config_status() -> dict[str, Any]:
     }
 
 
-class ResponsableCorreoEntry(BaseModel):
-    Responsable: str
-    Correo: str = ""
-
-
-class SaveResponsablesRequest(BaseModel):
-    entries: list[ResponsableCorreoEntry]
-
-
-class SendReportRequest(BaseModel):
-    records: list[dict[str, Any]]
-
-
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -923,23 +679,6 @@ async def preview_alerts(
         return process_excel_bytes(payload, sheet_name)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Error procesando archivo: {exc}") from exc
-
-
-@app.get("/api/responsables")
-def get_responsables_mapping() -> dict[str, Any]:
-    return {
-        "mapping_file": str(MAPPING_FILE),
-        "entries": [{"Responsable": k, "Correo": v} for k, v in load_email_mapping().items()],
-    }
-
-
-@app.post("/api/responsables/save")
-def save_responsables_mapping(payload: SaveResponsablesRequest) -> dict[str, Any]:
-    try:
-        save_email_mapping([entry.model_dump() for entry in payload.entries])
-        return {"ok": True, "saved_count": len(payload.entries), "mapping_file": str(MAPPING_FILE)}
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"No se pudo guardar el mapeo: {exc}") from exc
 
 
 @app.post("/api/sharepoint/diagnostic")
@@ -972,10 +711,3 @@ def sharepoint_diagnostic(sharepoint_url: str = Form(...)) -> dict[str, Any]:
     return result
 
 
-@app.post("/api/report/send")
-def send_report(payload: SendReportRequest) -> dict[str, Any]:
-    try:
-        result = send_report_email(payload.records)
-        return {"ok": True, **result}
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"No se pudo enviar informe: {exc}") from exc

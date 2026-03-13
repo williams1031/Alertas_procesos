@@ -12,11 +12,6 @@ import {
   YAxis
 } from "recharts";
 
-type ResponsableEntry = {
-  Responsable: string;
-  Correo: string;
-};
-
 type BoardRow = {
   responsable: string;
   vencidos: number;
@@ -49,7 +44,6 @@ type PreviewResponse = {
   source_preview: Record<string, string | number | null>[];
   alerts_preview: Record<string, string | number | null>[];
   responsables: string[];
-  email_mapping: Record<string, string>;
   tableros: BoardData[];
   status_analysis: {
     estatus_top: ChartPoint[];
@@ -85,15 +79,6 @@ type PreviewResponse = {
     Estatus: string;
     Quien_Liquida: string;
     Fecha_Vencimiento: string;
-  }[];
-  report_records: {
-    Responsable: string;
-    Tipo: string;
-    Regla: string;
-    "Cuenta Contrato": string;
-    Ciudad: string;
-    Fecha_Vencimiento: string;
-    DiasInt: number;
   }[];
 };
 
@@ -357,14 +342,9 @@ export default function HomePage() {
   const [data, setData] = useState<PreviewResponse | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
-  const [responsables, setResponsables] = useState<ResponsableEntry[]>([]);
-  const [savingEmails, setSavingEmails] = useState(false);
-  const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [diagnosingSharepoint, setDiagnosingSharepoint] = useState(false);
   const [diagnosticError, setDiagnosticError] = useState<string | null>(null);
   const [diagnosticData, setDiagnosticData] = useState<SharepointDiagnosticResponse | null>(null);
-  const [sendingReport, setSendingReport] = useState(false);
-  const [reportMessage, setReportMessage] = useState<string | null>(null);
   const [exportMode, setExportMode] = useState<"BASICA" | "COMPLETA">("BASICA");
   const [filterTipo, setFilterTipo] = useState("TODOS");
   const [filterResponsable, setFilterResponsable] = useState("TODOS");
@@ -442,10 +422,6 @@ export default function HomePage() {
   const chartRegla = useMemo(() => aggregateBy(filteredRecords, "Regla", 12), [filteredRecords]);
   const chartResponsable = useMemo(() => aggregateBy(filteredRecords, "Responsable", 12), [filteredRecords]);
   const chartCiudad = useMemo(() => aggregateBy(filteredRecords, "Ciudad", 12), [filteredRecords]);
-  const chartTriggers = useMemo(
-    () => aggregateBy(filteredRecords.filter((x) => x.EmailTrigger), "EmailTrigger", 12),
-    [filteredRecords]
-  );
 
   const chartDias = useMemo(() => {
     const bucket = new Map<string, number>();
@@ -522,7 +498,6 @@ export default function HomePage() {
   const onFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     setFile(event.target.files?.[0] ?? null);
     setError(null);
-    setSaveMessage(null);
   };
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -545,35 +520,10 @@ export default function HomePage() {
       if (!response.ok) throw new Error((payload as { detail?: string }).detail ?? "Error procesando.");
       const parsed = payload as PreviewResponse;
       setData(parsed);
-      setResponsables(
-        parsed.responsables.map((name) => ({ Responsable: name, Correo: parsed.email_mapping[name] ?? "" }))
-      );
-      setSaveMessage(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo procesar.");
     } finally {
       setLoading(false);
-    }
-  };
-
-  const onSaveEmails = async () => {
-    setSavingEmails(true);
-    setSaveMessage(null);
-    try {
-      const response = await fetch(`${API_URL}/api/responsables/save`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          entries: responsables.map((x) => ({ Responsable: x.Responsable, Correo: x.Correo }))
-        })
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.detail ?? "No se pudo guardar.");
-      setSaveMessage("Correos guardados correctamente.");
-    } catch (err) {
-      setSaveMessage(err instanceof Error ? err.message : "Error guardando.");
-    } finally {
-      setSavingEmails(false);
     }
   };
 
@@ -601,33 +551,6 @@ export default function HomePage() {
     }
   };
 
-  const onSendReport = async () => {
-    if (!data?.report_records?.length) {
-      setReportMessage("No hay datos para enviar en el informe.");
-      return;
-    }
-    setSendingReport(true);
-    setReportMessage(null);
-    try {
-      const response = await fetch(`${API_URL}/api/report/send`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ records: data.report_records })
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.detail ?? "No se pudo enviar el informe.");
-      setReportMessage(
-        `Informe general enviado a wrodriguezg@acueducto.com.co. ` +
-          `Correos personalizados enviados: ${payload.personal_sent ?? 0}. ` +
-          `Sin correo configurado: ${payload.personal_missing_email ?? 0}. ` +
-          `Correos invalidos: ${payload.personal_invalid_email ?? 0}.`
-      );
-    } catch (err) {
-      setReportMessage(err instanceof Error ? err.message : "Error enviando informe.");
-    } finally {
-      setSendingReport(false);
-    }
-  };
 
   return (
     <main className="relative mx-auto min-h-screen max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
@@ -708,38 +631,6 @@ export default function HomePage() {
       )}
 
       {data && (
-        <section className="card mb-8 p-6">
-          <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <h2 className={`text-xl font-semibold ${darkMode ? "text-slate-100" : "text-ink"}`}>Responsables y correos</h2>
-            <button type="button" onClick={onSaveEmails} disabled={savingEmails || responsables.length === 0} className={`rounded-xl px-4 py-2.5 text-sm font-semibold text-white transition disabled:opacity-60 ${darkMode ? "bg-brand-600 hover:bg-brand-500" : "bg-brand-700 hover:bg-brand-800"}`}>
-              {savingEmails ? "Guardando..." : "Guardar correos"}
-            </button>
-          </div>
-          {saveMessage && <p className={`mb-4 rounded-lg border px-3 py-2 text-sm ${darkMode ? "border-brand-700 bg-brand-950/50 text-brand-200" : "border-brand-200 bg-brand-50 text-brand-900"}`}>{saveMessage}</p>}
-          <div className={`overflow-auto rounded-xl border ${darkMode ? "border-slate-700/80" : "border-slate-200"}`}>
-            <table className="min-w-full text-sm">
-              <thead className={darkMode ? "bg-slate-900/80" : "bg-brand-50"}>
-                <tr>
-                  <th className={`px-3 py-2 text-left font-semibold ${darkMode ? "text-brand-200" : "text-brand-900"}`}>Responsable</th>
-                  <th className={`px-3 py-2 text-left font-semibold ${darkMode ? "text-brand-200" : "text-brand-900"}`}>Correo</th>
-                </tr>
-              </thead>
-              <tbody>
-                {responsables.map((entry, index) => (
-                  <tr key={entry.Responsable} className={`${darkMode ? "border-slate-800/90 odd:bg-slate-900/40 even:bg-slate-900/70" : "border-slate-100 odd:bg-white even:bg-slate-50/50"} border-t`}>
-                    <td className={`px-3 py-2 ${darkMode ? "text-slate-200" : "text-slate-700"}`}>{entry.Responsable}</td>
-                    <td className="px-3 py-2">
-                      <input type="email" value={entry.Correo} onChange={(e) => setResponsables((prev) => prev.map((item, i) => (i === index ? { ...item, Correo: e.target.value } : item)))} className={`block w-full rounded-lg border px-3 py-2 text-sm ${darkMode ? "border-slate-700 bg-slate-900/80 text-slate-100" : "border-slate-300 text-slate-800"}`} />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      )}
-
-      {data && (
         <section className="space-y-6">
           {data.tableros.map((board) => (
             <BoardTable key={board.key} board={board} darkMode={darkMode} />
@@ -768,16 +659,6 @@ export default function HomePage() {
                 </p>
               </div>
               <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={onSendReport}
-                  disabled={sendingReport || !data?.report_records?.length}
-                  className={`rounded-lg px-3 py-2 text-xs font-semibold text-white transition disabled:opacity-50 ${
-                    darkMode ? "bg-indigo-600 hover:bg-indigo-500" : "bg-indigo-700 hover:bg-indigo-800"
-                  }`}
-                >
-                  {sendingReport ? "Enviando informe..." : "Enviar informe"}
-                </button>
                 <select
                   value={exportMode}
                   onChange={(e) => setExportMode(e.target.value as "BASICA" | "COMPLETA")}
@@ -810,15 +691,6 @@ export default function HomePage() {
                 </button>
               </div>
             </div>
-            {reportMessage && (
-              <p className={`mt-3 rounded-lg border px-3 py-2 text-xs ${
-                reportMessage.toLowerCase().includes("correctamente")
-                  ? (darkMode ? "border-green-800 bg-green-950/40 text-green-200" : "border-green-200 bg-green-50 text-green-700")
-                  : (darkMode ? "border-rose-800 bg-rose-950/40 text-rose-200" : "border-rose-200 bg-rose-50 text-rose-700")
-              }`}>
-                {reportMessage}
-              </p>
-            )}
             <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <div>
                 <label className={`mb-1 block text-xs font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Tipo</label>
@@ -902,7 +774,6 @@ export default function HomePage() {
           <section className="grid gap-6 lg:grid-cols-3">
             <InteractiveBarChart title="Top Ciudades" data={chartCiudad} darkMode={darkMode} barColor="#f59e0b" />
             <InteractiveBarChart title="Distribucion por Dias" data={chartDias} darkMode={darkMode} barColor="#ef4444" />
-            <InteractiveBarChart title="Triggers de Correo" data={chartTriggers} darkMode={darkMode} barColor="#14b8a6" />
           </section>
         </section>
       )}
