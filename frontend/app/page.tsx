@@ -94,6 +94,12 @@ type SharepointDiagnosticResponse = {
   download_error?: string;
 };
 
+type ChatMessage = {
+  id: number;
+  role: "assistant" | "user";
+  text: string;
+};
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 function BoardTable({ board, darkMode }: { board: BoardData; darkMode: boolean }) {
@@ -432,6 +438,16 @@ export default function HomePage() {
   const [filterResponsable, setFilterResponsable] = useState("TODOS");
   const [filterCiudad, setFilterCiudad] = useState("TODOS");
   const [filterRangoDias, setFilterRangoDias] = useState("TODOS");
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatInput, setChatInput] = useState("");
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
+    {
+      id: Date.now(),
+      role: "assistant",
+      text: "Hola. Soy tu asistente del tablero. Puedes preguntarme por el programa o por el analisis actual."
+    }
+  ]);
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const enabled = window.localStorage.getItem("dark_mode") === "1";
@@ -541,6 +557,76 @@ export default function HomePage() {
     }
     return base;
   }, [filteredRecords]);
+
+  useEffect(() => {
+    if (chatScrollRef.current) {
+      chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+    }
+  }, [chatMessages, chatOpen]);
+
+  const buildChatReply = (question: string): string => {
+    const q = question
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .trim();
+
+    if (!data) {
+      return "Aun no hay analisis cargado. Primero sube el Excel o pega el link de SharePoint y luego te respondo con datos del tablero.";
+    }
+
+    if (q.includes("que hace") || q.includes("como funciona") || q.includes("programa")) {
+      return "Este programa lee el Excel, construye tableros por tipo de proceso, calcula vencimientos, muestra indicadores y permite exportar los resultados filtrados a CSV o Excel.";
+    }
+
+    if (q.includes("hoja") || q.includes("sheet")) {
+      return `La hoja analizada es: ${data.sheet_used}. Registros fuente: ${data.source_total_rows}. Alertas procesadas: ${data.alerts_total_rows}.`;
+    }
+
+    if (q.includes("tableros") || q.includes("tablero")) {
+      const names = data.tableros.map((b) => b.title).join(" | ");
+      return `Tableros disponibles: ${names}.`;
+    }
+
+    if (q.includes("resumen") || q.includes("analisis") || q.includes("metricas") || q.includes("estado actual")) {
+      return `Resumen actual: total ${filteredTotals.alertas_total}, vencidas ${filteredTotals.vencidas}, 0-10 dias ${filteredTotals.por_vencer_0_10}, 11-30 dias ${filteredTotals.rango_11_30}, 31-60 dias ${filteredTotals.rango_31_60}, 61-150 dias ${filteredTotals.rango_61_150}.`;
+    }
+
+    if (q.includes("pendiente por asignar") || q.includes("asignacion") || q.includes("proyeccion")) {
+      let pendientes = 0;
+      let proyeccion = 0;
+      for (const board of data.tableros) {
+        for (const row of board.rows) {
+          const label = String(row.responsable || "").toLowerCase();
+          if (label.includes("pendiente por asignar")) pendientes += Number(row.total_general || 0);
+          if (label.includes("(proyeccion)")) proyeccion += Number(row.total_general || 0);
+        }
+      }
+      return `En los tableros actuales hay ${pendientes} casos como "Pendiente por asignar" y ${proyeccion} casos marcados en "Proyeccion".`;
+    }
+
+    if (q.includes("vencidas")) {
+      return `Alertas vencidas en el analisis filtrado: ${filteredTotals.vencidas}.`;
+    }
+
+    if (q.includes("0 a 10") || q.includes("por vencer")) {
+      return `Alertas en rango 0 a 10 dias: ${filteredTotals.por_vencer_0_10}.`;
+    }
+
+    return "Puedo ayudarte con: resumen del analisis, hoja leida, tableros disponibles, vencidas, rangos de dias, pendientes por asignar y proyeccion.";
+  };
+
+  const onSendChat = () => {
+    const text = chatInput.trim();
+    if (!text) return;
+    const reply = buildChatReply(text);
+    setChatMessages((prev) => [
+      ...prev,
+      { id: Date.now(), role: "user", text },
+      { id: Date.now() + 1, role: "assistant", text: reply }
+    ]);
+    setChatInput("");
+  };
 
   const exportFilteredAnalysis = (format: "csv" | "xlsx") => {
     if (!filteredRecords.length) return;
@@ -864,6 +950,74 @@ export default function HomePage() {
         <section className="mt-8 grid gap-6 lg:grid-cols-2">
           <DataTable title="Vista previa fuente (20)" rows={data.source_preview} darkMode={darkMode} />
           <DataTable title="Vista previa alertas (60)" rows={data.alerts_preview} darkMode={darkMode} />
+        </section>
+      )}
+
+      <button
+        type="button"
+        onClick={() => setChatOpen((prev) => !prev)}
+        className={`fixed bottom-5 right-5 z-50 h-14 w-14 rounded-full border text-2xl shadow-xl transition ${
+          darkMode
+            ? "border-slate-600 bg-slate-900/95 hover:bg-slate-800 text-slate-100"
+            : "border-slate-300 bg-white hover:bg-slate-100 text-slate-800"
+        }`}
+        aria-label="Abrir asistente IA"
+      >
+        🤖
+      </button>
+
+      {chatOpen && (
+        <section
+          className={`fixed bottom-24 right-5 z-50 flex h-[28rem] w-[22rem] flex-col overflow-hidden rounded-2xl border shadow-2xl ${
+            darkMode ? "border-slate-700 bg-slate-950 text-slate-100" : "border-slate-300 bg-white text-slate-800"
+          }`}
+        >
+          <header className={`flex items-center justify-between border-b px-4 py-3 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
+            <p className="text-sm font-semibold">Asistente IA</p>
+            <button
+              type="button"
+              onClick={() => setChatMessages([{ id: Date.now(), role: "assistant", text: "Chat reiniciado. Preguntame lo que necesites sobre el tablero." }])}
+              className={`rounded-lg px-2 py-1 text-xs ${darkMode ? "bg-slate-800 hover:bg-slate-700" : "bg-slate-100 hover:bg-slate-200"}`}
+            >
+              Limpiar
+            </button>
+          </header>
+          <div ref={chatScrollRef} className={`flex-1 space-y-3 overflow-y-auto px-3 py-3 ${darkMode ? "bg-slate-950" : "bg-slate-50"}`}>
+            {chatMessages.map((m) => (
+              <div key={m.id} className={`max-w-[90%] rounded-xl px-3 py-2 text-xs leading-relaxed ${
+                m.role === "assistant"
+                  ? darkMode
+                    ? "bg-slate-800 text-slate-100"
+                    : "bg-white text-slate-800 border border-slate-200"
+                  : darkMode
+                    ? "ml-auto bg-brand-700 text-white"
+                    : "ml-auto bg-brand-600 text-white"
+              }`}>
+                {m.text}
+              </div>
+            ))}
+          </div>
+          <div className={`flex gap-2 border-t p-3 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
+            <input
+              type="text"
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") onSendChat();
+              }}
+              placeholder="Pregunta sobre el programa o analisis..."
+              className={`flex-1 rounded-lg border px-3 py-2 text-xs ${
+                darkMode ? "border-slate-700 bg-slate-900 text-slate-100" : "border-slate-300 bg-white text-slate-800"
+              }`}
+            />
+            <button
+              type="button"
+              onClick={onSendChat}
+              className={`rounded-lg px-3 py-2 text-xs font-semibold text-white ${darkMode ? "bg-brand-600 hover:bg-brand-500" : "bg-brand-700 hover:bg-brand-800"}`}
+            >
+              Enviar
+            </button>
+          </div>
         </section>
       )}
     </main>
