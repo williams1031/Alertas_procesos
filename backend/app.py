@@ -106,6 +106,16 @@ def explode_by_responsable(df: pd.DataFrame, responsable_col: str = "Responsable
     return work
 
 
+def build_responsable_label(responsable: Any, estado: Any) -> str:
+    resp = str(responsable or "").strip()
+    estado_norm = normalize_text(estado)
+    if not resp or resp.lower() in {"nan", "none"}:
+        return "Pendiente por asignar"
+    if "para asignacion" in estado_norm or "pendiente por asignar" in estado_norm:
+        return "Pendiente por asignar"
+    return f"{resp} (Proyeccion)"
+
+
 def build_block(df: pd.DataFrame, required_columns: list[tuple[str, str]], tipo: str, regla: str) -> pd.DataFrame:
     col_map = map_columns(df, required_columns)
     block = df[list(col_map.keys())].rename(columns=col_map).copy()
@@ -166,6 +176,7 @@ def build_alerts_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame
     # Tablero de "Pendiente determinar procedencia":
     # responsable sale de la columna Liquidación y aplica ventana de 45 dias.
     estatus_col = col(df, "Estatus")
+    estado_col = col(df, "Estado")
     estatus_norm = df[estatus_col].astype(str).str.strip().str.lower()
     proc_status_mask = estatus_norm.str.contains("pendiente determinar procedencia", na=False)
 
@@ -183,13 +194,13 @@ def build_alerts_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame
             "Tipo": "Pendiente determinar procedencia",
             "Regla": "Estatus pendiente determinar procedencia (<=45 dias)",
             "Estatus": df[estatus_col].astype(str).str.strip(),
+            "Estado": df[estado_col].astype(str).str.strip(),
         }
     )
     proc_df = proc_df[proc_status_mask & (proc_df["Dias"] <= 45)].copy()
-    proc_df["Responsable"] = proc_df["Responsable"].replace(
-        {"": "Pendiente por asignar", "nan": "Pendiente por asignar", "None": "Pendiente por asignar"}
+    proc_df["Responsable"] = proc_df.apply(
+        lambda row: build_responsable_label(row.get("Responsable"), row.get("Estado")), axis=1
     )
-    proc_df.loc[proc_df["Responsable"].isna(), "Responsable"] = "Pendiente por asignar"
     proc_df["EmailTrigger"] = proc_df["Dias"].apply(
         lambda d: "PENDIENTE_LIQUIDACION_30" if pd.notna(d) and int(d) == 30 else ""
     )
@@ -209,6 +220,7 @@ def build_alerts_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame
             "Tipo": "Pendiente Control",
             "Regla": "Estatus para expediente/para administrativo (incluye mixtos)",
             "Estatus": df[estatus_col].astype(str).str.strip(),
+            "Estado": df[estado_col].astype(str).str.strip(),
         }
     )
     pending_status_df = pending_status_df[pending_status_mask & (pending_status_df["Dias"] <= FIVE_MONTH_DAYS)].copy()
@@ -216,14 +228,20 @@ def build_alerts_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame
         lambda d: "PENDIENTE_LIQUIDACION_30" if pd.notna(d) and int(d) == 30 else ""
     )
 
-    # If both responsables are empty, classify as pending assignment.
-    resp_adm = df[responsable_adm_col]
-    resp_pen = df[responsable_pen_col]
-    no_resp_mask = series_empty(resp_adm) & series_empty(resp_pen)
-    pending_status_df.loc[no_resp_mask.reindex(pending_status_df.index, fill_value=False), "Responsable"] = "Pendiente por asignar"
-    pending_status_df.loc[
-        no_resp_mask.reindex(pending_status_df.index, fill_value=False), "Quien_Liquida"
-    ] = "Pendiente por asignar"
+    pending_status_df["Responsable"] = pending_status_df.apply(
+        lambda row: build_responsable_label(row.get("Responsable"), row.get("Estado")), axis=1
+    )
+
+    admin_5m["Estatus"] = df[estatus_col]
+    admin_5m["Estado"] = df[estado_col]
+    penal_5m["Estatus"] = df[estatus_col]
+    penal_5m["Estado"] = df[estado_col]
+    admin_5m["Responsable"] = admin_5m.apply(
+        lambda row: build_responsable_label(row.get("Responsable"), row.get("Estado")), axis=1
+    )
+    penal_5m["Responsable"] = penal_5m.apply(
+        lambda row: build_responsable_label(row.get("Responsable"), row.get("Estado")), axis=1
+    )
 
     combinado_5m = pd.concat([admin_5m, penal_5m], ignore_index=True)
     combinado_5m["EmailTrigger"] = combinado_5m["Dias"].apply(
@@ -242,16 +260,6 @@ def build_alerts_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame
     return all_alerts, proc_df, pending_status_df
 
 
-def extract_responsables(df: pd.DataFrame) -> list[str]:
-    admin = df[col(df, "Responsable Administrativo")]
-    penal = df[col(df, "Responsable Penal")]
-    merged = pd.concat([admin, penal], ignore_index=True).dropna().astype(str)
-    all_names: list[str] = []
-    for value in merged.tolist():
-        all_names.extend(split_responsables(value))
-    return sorted(set(all_names))
-
-
 def compact_day_columns(series: pd.Series, min_day: int = 0, max_day: int = FIVE_MONTH_DAYS) -> list[int]:
     values = sorted({int(v) for v in series.dropna().tolist() if min_day <= int(v) <= max_day})
     if len(values) <= 32:
@@ -263,13 +271,7 @@ def compact_day_columns(series: pd.Series, min_day: int = 0, max_day: int = FIVE
     return merged
 
 
-def build_day_board(
-    alertas: pd.DataFrame,
-    responsables: list[str],
-    key: str,
-    title: str,
-    description: str,
-) -> dict[str, Any]:
+def build_day_board(alertas: pd.DataFrame, key: str, title: str, description: str) -> dict[str, Any]:
     base = explode_by_responsable(alertas, "Responsable")
     if base.empty:
         return {
@@ -291,7 +293,11 @@ def build_day_board(
     total_vencidos = 0
     total_general = 0
 
-    for name in responsables:
+    board_responsables = sorted(set(base["Responsable"].astype(str).str.strip().tolist()))
+    if "Pendiente por asignar" in board_responsables:
+        board_responsables = ["Pendiente por asignar"] + [n for n in board_responsables if n != "Pendiente por asignar"]
+
+    for name in board_responsables:
         resp_df = base[base["Responsable"] == name]
         counts = {str(day): 0 for day in day_columns}
         if not resp_df.empty:
@@ -495,14 +501,6 @@ def process_excel_bytes(file_bytes: bytes, sheet_name: str | None) -> dict[str, 
     df.columns = [str(c).strip() for c in df.columns]
 
     all_alerts, proc_df, pending_status_df = build_alerts_dataframe(df)
-    responsables = extract_responsables(df)
-    extra_resp: set[str] = set()
-    for frame in [proc_df, pending_status_df]:
-        if not frame.empty and "Responsable" in frame.columns:
-            vals = frame["Responsable"].dropna().astype(str).str.strip()
-            vals = vals[(vals != "") & (vals.str.lower() != "nan")]
-            extra_resp.update(vals.tolist())
-    responsables = sorted(set(responsables).union(extra_resp))
 
     admin_5m = all_alerts[all_alerts["Tipo"] == "Administrativo"].copy()
     penal_5m = all_alerts[all_alerts["Tipo"] == "Penal"].copy()
@@ -511,28 +509,24 @@ def process_excel_bytes(file_bytes: bytes, sheet_name: str | None) -> dict[str, 
     boards = [
         build_day_board(
             proc_df,
-            responsables,
             key="pendientes_procedencia",
             title="Tablero de Pendiente determinar procedencia (45 dias)",
             description="Estatus 'Pendiente determinar procedencia'. Responsable tomado de columna Liquidación.",
         ),
         build_day_board(
             penal_5m,
-            responsables,
             key="penales_5m",
             title="Tablero de Penales 5 Meses",
             description="Alertas penales con vencimiento en 5 meses o menos.",
         ),
         build_day_board(
             admin_5m,
-            responsables,
             key="administrativos_5m",
             title="Tablero de Administrativos 5 Meses",
             description="Alertas administrativas con vencimiento en 5 meses o menos.",
         ),
         build_day_board(
             combinado_5m,
-            responsables,
             key="combinado_5m",
             title="Penal Administrativo Combinado 5 Meses",
             description="Vista consolidada penal + administrativo a 5 meses.",
@@ -552,7 +546,6 @@ def process_excel_bytes(file_bytes: bytes, sheet_name: str | None) -> dict[str, 
         "source_preview": serialize_for_json(df, limit=20),
         "alerts_total_rows": int(len(all_alerts)),
         "alerts_preview": serialize_for_json(all_alerts, limit=60),
-        "responsables": responsables,
         "tableros": boards,
         "status_analysis": build_status_analysis(df),
         "control_dashboard": build_control_dashboard(pending_status_df),

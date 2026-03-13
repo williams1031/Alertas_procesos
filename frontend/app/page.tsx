@@ -43,7 +43,6 @@ type PreviewResponse = {
   alerts_total_rows: number;
   source_preview: Record<string, string | number | null>[];
   alerts_preview: Record<string, string | number | null>[];
-  responsables: string[];
   tableros: BoardData[];
   status_analysis: {
     estatus_top: ChartPoint[];
