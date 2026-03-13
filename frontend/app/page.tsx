@@ -1,6 +1,7 @@
 "use client";
 
-import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import html2canvas from "html2canvas";
 import * as XLSX from "xlsx";
 import {
   Bar,
@@ -97,8 +98,61 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 function BoardTable({ board, darkMode }: { board: BoardData; darkMode: boolean }) {
   const [showHelp, setShowHelp] = useState(false);
+  const [capturing, setCapturing] = useState(false);
+  const [captureMessage, setCaptureMessage] = useState<string | null>(null);
+  const boardRef = useRef<HTMLElement | null>(null);
   const daysMin = board.day_columns.length ? Math.min(...board.day_columns) : 0;
   const daysMax = board.day_columns.length ? Math.max(...board.day_columns) : 0;
+
+  const captureBoard = async (): Promise<Blob> => {
+    if (!boardRef.current) throw new Error("No se encontro el tablero.");
+    const canvas = await html2canvas(boardRef.current, {
+      scale: 2,
+      useCORS: true,
+      backgroundColor: darkMode ? "#0f172a" : "#ffffff"
+    });
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+    if (!blob) throw new Error("No fue posible generar la imagen.");
+    return blob;
+  };
+
+  const onCopyBoard = async () => {
+    try {
+      setCapturing(true);
+      setCaptureMessage(null);
+      const blob = await captureBoard();
+      if (!window.ClipboardItem || !navigator.clipboard?.write) {
+        throw new Error("Tu navegador no permite copiar imagenes al portapapeles.");
+      }
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+      setCaptureMessage("Imagen copiada.");
+    } catch (err) {
+      setCaptureMessage(err instanceof Error ? err.message : "No se pudo copiar la imagen.");
+    } finally {
+      setCapturing(false);
+    }
+  };
+
+  const onSaveBoard = async () => {
+    try {
+      setCapturing(true);
+      setCaptureMessage(null);
+      const blob = await captureBoard();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `tablero_${board.key}.png`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setCaptureMessage("Imagen guardada.");
+    } catch (err) {
+      setCaptureMessage(err instanceof Error ? err.message : "No se pudo guardar la imagen.");
+    } finally {
+      setCapturing(false);
+    }
+  };
 
   const boardSpecificExplanation = (key: string): string => {
     if (key === "pendientes_procedencia") {
@@ -117,25 +171,54 @@ function BoardTable({ board, darkMode }: { board: BoardData; darkMode: boolean }
   };
 
   return (
-    <section className="card relative p-6">
+    <section ref={boardRef} className="card relative p-6">
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
           <h2 className={`text-xl font-semibold ${darkMode ? "text-slate-100" : "text-ink"}`}>{board.title}</h2>
           <p className={`text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{board.description}</p>
         </div>
-        <button
-          type="button"
-          onClick={() => setShowHelp((prev) => !prev)}
-          className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${
-            darkMode
-              ? "border-slate-600 bg-slate-900/80 text-slate-200 hover:bg-slate-800"
-              : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
-          }`}
-          aria-label={`Explicacion de ${board.title}`}
-        >
-          ? Ayuda
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onCopyBoard}
+            disabled={capturing}
+            className={`rounded-full border px-3 py-1 text-xs font-semibold transition disabled:opacity-60 ${
+              darkMode
+                ? "border-slate-600 bg-slate-900/80 text-slate-200 hover:bg-slate-800"
+                : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+            }`}
+          >
+            Copiar
+          </button>
+          <button
+            type="button"
+            onClick={onSaveBoard}
+            disabled={capturing}
+            className={`rounded-full border px-3 py-1 text-xs font-semibold transition disabled:opacity-60 ${
+              darkMode
+                ? "border-slate-600 bg-slate-900/80 text-slate-200 hover:bg-slate-800"
+                : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+            }`}
+          >
+            Guardar
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowHelp((prev) => !prev)}
+            className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${
+              darkMode
+                ? "border-slate-600 bg-slate-900/80 text-slate-200 hover:bg-slate-800"
+                : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+            }`}
+            aria-label={`Explicacion de ${board.title}`}
+          >
+            ? Ayuda
+          </button>
+        </div>
       </div>
+      {captureMessage && (
+        <p className={`mb-3 text-xs ${darkMode ? "text-slate-300" : "text-slate-600"}`}>{captureMessage}</p>
+      )}
 
       {showHelp && (
         <div className={`absolute right-6 top-20 z-30 w-[22rem] rounded-2xl border p-4 shadow-2xl ${darkMode ? "border-slate-700 bg-slate-950/95 text-slate-200" : "border-slate-200 bg-white text-slate-700"}`}>
