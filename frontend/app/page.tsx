@@ -564,6 +564,35 @@ export default function HomePage() {
     }
   }, [chatMessages, chatOpen]);
 
+  const normalizedAnalysis = useMemo(
+    () =>
+      analysisRecords.map((row) => ({
+        ...row,
+        _responsable: String(row.Responsable || "")
+          .toLowerCase()
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .trim(),
+        _tipo: String(row.Tipo || "")
+          .toLowerCase()
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .trim(),
+        _estatus: String(row.Estatus || "")
+          .toLowerCase()
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .trim(),
+        _ciudad: String(row.Ciudad || "")
+          .toLowerCase()
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .trim(),
+        _cuenta: String(row["Cuenta Contrato"] || "").trim()
+      })),
+    [analysisRecords]
+  );
+
   const buildChatReply = (question: string): string => {
     const q = question
       .toLowerCase()
@@ -575,8 +604,80 @@ export default function HomePage() {
       return "Aun no hay analisis cargado. Primero sube el Excel o pega el link de SharePoint y luego te respondo con datos del tablero.";
     }
 
+    const daysFound = Array.from(q.matchAll(/-?\d+/g)).map((m) => Number(m[0])).filter((n) => !Number.isNaN(n));
+    const mentionedDay = daysFound.length ? daysFound[0] : null;
+    const asksWho =
+      q.includes("quien") ||
+      q.includes("quienes") ||
+      q.includes("persona") ||
+      q.includes("personas") ||
+      q.includes("responsable") ||
+      q.includes("responsables");
+    const asksHowMany =
+      q.includes("cuantos") ||
+      q.includes("cuantas") ||
+      q.includes("cantidad") ||
+      q.includes("total");
+    const asksPending =
+      q.includes("pendiente") ||
+      q.includes("pendientes") ||
+      q.includes("por asignar") ||
+      q.includes("proyeccion");
+    const askedTipo = q.includes("penal")
+      ? "penal"
+      : q.includes("administrativo")
+        ? "administrativo"
+        : q.includes("procedencia")
+          ? "pendiente determinar procedencia"
+          : null;
+    const askedStatusKeyword = q.includes("estatus")
+      ? q.replace(/.*estatus\s+/, "").trim()
+      : q.includes("estado")
+        ? q.replace(/.*estado\s+/, "").trim()
+        : "";
+
+    const knownResponsables = Array.from(new Set(normalizedAnalysis.map((row) => row._responsable).filter(Boolean)));
+    const matchedResponsable = knownResponsables.find((name) => name && q.includes(name));
+
+    let scopedRows = normalizedAnalysis;
+    if (askedTipo) {
+      scopedRows = scopedRows.filter((row) => row._tipo.includes(askedTipo));
+    }
+    if (matchedResponsable) {
+      scopedRows = scopedRows.filter((row) => row._responsable.includes(matchedResponsable));
+    }
+    if (q.includes("vencid")) {
+      scopedRows = scopedRows.filter((row) => Number(row.DiasInt) < 0);
+    } else if (mentionedDay !== null) {
+      if (q.includes("mas de")) {
+        scopedRows = scopedRows.filter((row) => Number(row.DiasInt) > mentionedDay);
+      } else if (q.includes("menos de")) {
+        scopedRows = scopedRows.filter((row) => Number(row.DiasInt) < mentionedDay);
+      } else if (q.includes("entre") && daysFound.length >= 2) {
+        const minDay = Math.min(daysFound[0], daysFound[1]);
+        const maxDay = Math.max(daysFound[0], daysFound[1]);
+        scopedRows = scopedRows.filter((row) => Number(row.DiasInt) >= minDay && Number(row.DiasInt) <= maxDay);
+      } else {
+        scopedRows = scopedRows.filter((row) => Number(row.DiasInt) === mentionedDay);
+      }
+    }
+
+    if (q.includes("para asignacion")) {
+      scopedRows = scopedRows.filter((row) => row._responsable.includes("pendiente por asignar"));
+    }
+    if (q.includes("proyeccion")) {
+      scopedRows = scopedRows.filter((row) => row._responsable.includes("(proyeccion)"));
+    }
+    if (askedStatusKeyword && (q.includes("estatus") || q.includes("estado"))) {
+      scopedRows = scopedRows.filter((row) => row._estatus.includes(askedStatusKeyword));
+    }
+
     if (q.includes("que hace") || q.includes("como funciona") || q.includes("programa")) {
       return "Este programa lee el Excel, construye tableros por tipo de proceso, calcula vencimientos, muestra indicadores y permite exportar los resultados filtrados a CSV o Excel.";
+    }
+
+    if (q.includes("leiste el excel") || q.includes("leer el excel") || q.includes("leiste el archivo") || q.includes("archivo cargado")) {
+      return `Si. El analisis actual sale del Excel cargado en la hoja ${data.sheet_used}. Tengo ${data.source_total_rows} registros fuente y ${data.alerts_total_rows} alertas procesadas.`;
     }
 
     if (q.includes("hoja") || q.includes("sheet")) {
@@ -613,7 +714,88 @@ export default function HomePage() {
       return `Alertas en rango 0 a 10 dias: ${filteredTotals.por_vencer_0_10}.`;
     }
 
-    return "Puedo ayudarte con: resumen del analisis, hoja leida, tableros disponibles, vencidas, rangos de dias, pendientes por asignar y proyeccion.";
+    if (matchedResponsable && !asksWho && !asksHowMany) {
+      const personRows = normalizedAnalysis.filter((row) => row._responsable.includes(matchedResponsable));
+      const vencidas = personRows.filter((row) => Number(row.DiasInt) < 0).length;
+      const proximas = personRows.filter((row) => Number(row.DiasInt) >= 0 && Number(row.DiasInt) <= 10).length;
+      const tipos = Array.from(new Set(personRows.map((row) => row.Tipo).filter(Boolean))).join(", ");
+      return `${matchedResponsable} tiene ${personRows.length} alertas en total. Vencidas: ${vencidas}. Entre 0 y 10 dias: ${proximas}. Tipos detectados: ${tipos || "sin tipo"}.`;
+    }
+
+    if (mentionedDay !== null && asksWho) {
+      if (!scopedRows.length) {
+        return `No encontre responsables con alertas para ${mentionedDay} dias${askedTipo ? ` en ${askedTipo}` : ""}.`;
+      }
+      const byResp = new Map<string, number>();
+      for (const row of scopedRows) {
+        byResp.set(row.Responsable, (byResp.get(row.Responsable) ?? 0) + 1);
+      }
+      const ordered = Array.from(byResp.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 8)
+        .map(([name, count]) => `${name}: ${count}`)
+        .join(" | ");
+      return `Responsables con alertas para ${mentionedDay} dias${askedTipo ? ` en ${askedTipo}` : ""}: ${ordered}.`;
+    }
+
+    if (mentionedDay !== null && asksHowMany) {
+      return `Hay ${scopedRows.length} alertas${askedTipo ? ` de tipo ${askedTipo}` : ""} para ${mentionedDay} dias.`;
+    }
+
+    if (asksWho && asksPending) {
+      if (!scopedRows.length) {
+        return "No encontre responsables para esa condicion.";
+      }
+      const grouped = new Map<string, number>();
+      for (const row of scopedRows) {
+        grouped.set(row.Responsable, (grouped.get(row.Responsable) ?? 0) + 1);
+      }
+      const summary = Array.from(grouped.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10)
+        .map(([name, count]) => `${name}: ${count}`)
+        .join(" | ");
+      return `Responsables encontrados: ${summary}.`;
+    }
+
+    if ((q.includes("cuenta") || q.includes("contrato")) && daysFound.length) {
+      const cuentas = scopedRows
+        .slice(0, 10)
+        .map((row) => `${row["Cuenta Contrato"]} (${row.Responsable}, ${row.DiasInt} dias)`)
+        .join(" | ");
+      return cuentas
+        ? `Cuentas encontradas: ${cuentas}.`
+        : "No encontre cuentas contrato con esa condicion.";
+    }
+
+    if (q.includes("ciudad")) {
+      if (!scopedRows.length) {
+        return "No encontre ciudades para esa condicion.";
+      }
+      const byCity = new Map<string, number>();
+      for (const row of scopedRows) {
+        byCity.set(row.Ciudad || "Sin ciudad", (byCity.get(row.Ciudad || "Sin ciudad") ?? 0) + 1);
+      }
+      const summary = Array.from(byCity.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 8)
+        .map(([name, count]) => `${name}: ${count}`)
+        .join(" | ");
+      return `Distribucion por ciudad: ${summary}.`;
+    }
+
+    if (q.includes("estatus") || q.includes("estado")) {
+      if (!scopedRows.length) {
+        return "No encontre registros con ese estatus o estado.";
+      }
+      const sample = scopedRows
+        .slice(0, 8)
+        .map((row) => `${row.Responsable} | ${row.Estatus} | ${row.DiasInt} dias`)
+        .join(" | ");
+      return `Registros encontrados: ${sample}.`;
+    }
+
+    return "Puedo responder sobre el Excel cargado y el analisis actual. Prueba preguntas como: quien tiene 10 dias, cuantas alertas penales hay, que tiene Marcela pendiente, cuentas con 30 dias, ciudades con mas pendientes, o cuantos casos estan pendientes por asignar.";
   };
 
   const onSendChat = () => {
