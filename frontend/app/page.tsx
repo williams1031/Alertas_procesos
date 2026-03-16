@@ -40,6 +40,7 @@ type ChartPoint = {
 
 type PreviewResponse = {
   sheet_used: string;
+  source_columns: string[];
   source_total_rows: number;
   alerts_total_rows: number;
   source_preview: Record<string, string | number | null>[];
@@ -110,7 +111,21 @@ type ChatMessage = {
   text: string;
 };
 
+type ChatContext = {
+  rows: Array<Record<string, string | number | null>>;
+  scope: string;
+  summary: string;
+};
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+function normalizeForSearch(value: string | number | null | undefined) {
+  return String(value ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+}
 
 function BoardTable({ board, darkMode }: { board: BoardData; darkMode: boolean }) {
   const [showHelp, setShowHelp] = useState(false);
@@ -463,6 +478,7 @@ export default function HomePage() {
     }
   ]);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const chatContextRef = useRef<ChatContext | null>(null);
 
   useEffect(() => {
     const enabled = window.localStorage.getItem("dark_mode") === "1";
@@ -486,12 +502,53 @@ export default function HomePage() {
       setGeneralFilterEstado("TODOS");
       setGeneralFilterResponsable("TODOS");
       setGeneralSearch("");
+      chatContextRef.current = null;
     }
   }, [data]);
 
   const analysisRecords = data?.analysis_records ?? [];
   const generalRecords = data?.general_records ?? [];
   const generalBoardRecords = data?.general_board_records ?? [];
+
+  const normalizedGeneralRecords = useMemo(
+    () =>
+      generalRecords.map((row) => {
+        const enriched = { ...row } as Record<string, string | number | null> & {
+          _search: string;
+          _estatus: string;
+          _estado: string;
+          _tipo: string;
+          _responsable: string;
+          _responsables: string[];
+          _ciudad: string;
+          _cuenta: string;
+        };
+        const values = Object.values(row);
+        enriched._search = values.map((value) => normalizeForSearch(value)).join(" ");
+        enriched._estatus = normalizeForSearch(row.Estatus);
+        enriched._estado = normalizeForSearch(row.Estado);
+        enriched._tipo = normalizeForSearch(
+          row.Dias_Penal && row.Dias_Admin ? "combinado" : row.Dias_Penal ? "penal" : row.Dias_Admin ? "administrativo" : ""
+        );
+        enriched._responsables = [
+          normalizeForSearch(row.Responsable_Administrativo),
+          normalizeForSearch(row.Responsable_Penal),
+          normalizeForSearch(row.Liquidacion)
+        ].filter(Boolean);
+        enriched._responsable = enriched._responsables.join(" | ");
+        enriched._ciudad = normalizeForSearch(row.Ciudad);
+        enriched._cuenta = normalizeForSearch(row["Cuenta Contrato"]);
+        enriched.Responsable =
+          String(row.Responsable_Administrativo ?? "").trim() ||
+          String(row.Responsable_Penal ?? "").trim() ||
+          String(row.Liquidacion ?? "").trim() ||
+          "Sin responsable";
+        enriched.Ciudad = String(row.Ciudad ?? "").trim();
+        enriched.DiasInt = Number(row.Dias_Admin ?? row.Dias_Penal ?? NaN);
+        return enriched;
+      }),
+    [generalRecords]
+  );
 
   const tipoOptions = useMemo(() => {
     const vals = Array.from(new Set(analysisRecords.map((r) => r.Tipo).filter(Boolean)));
@@ -725,40 +782,22 @@ export default function HomePage() {
     () =>
       analysisRecords.map((row) => ({
         ...row,
-        _responsable: String(row.Responsable || "")
-          .toLowerCase()
-          .normalize("NFD")
-          .replace(/[\u0300-\u036f]/g, "")
-          .trim(),
-        _tipo: String(row.Tipo || "")
-          .toLowerCase()
-          .normalize("NFD")
-          .replace(/[\u0300-\u036f]/g, "")
-          .trim(),
-        _estatus: String(row.Estatus || "")
-          .toLowerCase()
-          .normalize("NFD")
-          .replace(/[\u0300-\u036f]/g, "")
-          .trim(),
-        _ciudad: String(row.Ciudad || "")
-          .toLowerCase()
-          .normalize("NFD")
-          .replace(/[\u0300-\u036f]/g, "")
-          .trim(),
-        _cuenta: String(row["Cuenta Contrato"] || "").trim()
+        _responsable: normalizeForSearch(row.Responsable),
+        _tipo: normalizeForSearch(row.Tipo),
+        _estatus: normalizeForSearch(row.Estatus),
+        _ciudad: normalizeForSearch(row.Ciudad),
+        _cuenta: normalizeForSearch(row["Cuenta Contrato"])
       })),
     [analysisRecords]
   );
 
-  const buildChatReply = (question: string): string => {
-    const q = question
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .trim();
+  const buildChatReply = (question: string): { text: string; context?: ChatContext } => {
+    const q = normalizeForSearch(question);
 
     if (!data) {
-      return "Aun no hay analisis cargado. Primero sube el Excel o pega el link de SharePoint y luego te respondo con datos del tablero.";
+      return {
+        text: "Aun no hay analisis cargado. Primero sube el Excel o pega el link de SharePoint y luego te respondo con datos del tablero."
+      };
     }
 
     const daysFound = Array.from(q.matchAll(/-?\d+/g)).map((m) => Number(m[0])).filter((n) => !Number.isNaN(n));
@@ -787,21 +826,46 @@ export default function HomePage() {
         : q.includes("procedencia")
           ? "pendiente determinar procedencia"
           : null;
-    const askedStatusKeyword = q.includes("estatus")
-      ? q.replace(/.*estatus\s+/, "").trim()
-      : q.includes("estado")
-        ? q.replace(/.*estado\s+/, "").trim()
-        : "";
+    const askedStatusKeyword = q.includes("estatus") ? q.replace(/.*estatus\s+/, "").trim() : "";
+    const askedEstadoKeyword = q.includes("estado") ? q.replace(/.*estado\s+/, "").trim() : "";
+    const isFollowUp =
+      q.includes("de esos") ||
+      q.includes("de esas") ||
+      q.includes("de ellos") ||
+      q.includes("y cuales") ||
+      q.includes("y quienes") ||
+      q.includes("y de esos") ||
+      q.includes("y de esas");
 
-    const knownResponsables = Array.from(new Set(normalizedAnalysis.map((row) => row._responsable).filter(Boolean)));
+    const knownResponsables = Array.from(
+      new Set(
+        [
+          ...normalizedAnalysis.map((row) => row._responsable),
+          ...normalizedGeneralRecords.flatMap((row) => row._responsables)
+        ].filter(Boolean)
+      )
+    );
+    const knownCities = Array.from(new Set(normalizedAnalysis.map((row) => row._ciudad).filter(Boolean)));
+    const knownEstatus = Array.from(new Set(normalizedGeneralRecords.map((row) => row._estatus).filter(Boolean)));
+    const knownEstado = Array.from(new Set(normalizedGeneralRecords.map((row) => row._estado).filter(Boolean)));
     const matchedResponsable = knownResponsables.find((name) => name && q.includes(name));
+    const matchedCity = knownCities.find((name) => name && q.includes(name));
+    const matchedEstatus = knownEstatus.find((name) => name && q.includes(name));
+    const matchedEstado = knownEstado.find((name) => name && q.includes(name));
 
-    let scopedRows = normalizedAnalysis;
+    let scopedRows = isFollowUp && chatContextRef.current?.rows?.length
+      ? (chatContextRef.current.rows as typeof normalizedAnalysis)
+      : normalizedAnalysis;
+    let sourceScope = isFollowUp && chatContextRef.current?.scope ? chatContextRef.current.scope : "analisis";
+
     if (askedTipo) {
       scopedRows = scopedRows.filter((row) => row._tipo.includes(askedTipo));
     }
     if (matchedResponsable) {
       scopedRows = scopedRows.filter((row) => row._responsable.includes(matchedResponsable));
+    }
+    if (matchedCity) {
+      scopedRows = scopedRows.filter((row) => row._ciudad.includes(matchedCity));
     }
     if (q.includes("vencid")) {
       scopedRows = scopedRows.filter((row) => Number(row.DiasInt) < 0);
@@ -825,29 +889,56 @@ export default function HomePage() {
     if (q.includes("proyeccion")) {
       scopedRows = scopedRows.filter((row) => row._responsable.includes("(proyeccion)"));
     }
-    if (askedStatusKeyword && (q.includes("estatus") || q.includes("estado"))) {
+    if (matchedEstatus || askedStatusKeyword) {
       scopedRows = scopedRows.filter((row) => row._estatus.includes(askedStatusKeyword));
+    }
+    if (matchedEstado || askedEstadoKeyword) {
+      const stateNeedle = matchedEstado || askedEstadoKeyword;
+      const rawScoped = isFollowUp && chatContextRef.current?.rows?.length
+        ? (chatContextRef.current.rows as typeof normalizedGeneralRecords)
+        : normalizedGeneralRecords;
+      const estadoRows = rawScoped.filter((row) => row._estado.includes(stateNeedle));
+      if (estadoRows.length) {
+        sourceScope = "general";
+        if (matchedResponsable) {
+          const narrowed = estadoRows.filter((row) => row._responsables.some((name) => name.includes(matchedResponsable)));
+          if (narrowed.length) {
+            return {
+              text: `En el Excel encontre ${narrowed.length} filas con estado ${stateNeedle}. Ejemplos: ${narrowed.slice(0, 6).map((row) => `${row["Cuenta Contrato"] || "Sin cuenta"} | ${row.Estado} | ${row.Estatus || "Sin estatus"}`).join(" | ")}.`,
+              context: { rows: narrowed, scope: sourceScope, summary: `Estado ${stateNeedle}` }
+            };
+          }
+        }
+      }
     }
 
     if (q.includes("que hace") || q.includes("como funciona") || q.includes("programa")) {
-      return "Este programa lee el Excel, construye tableros por tipo de proceso, calcula vencimientos, muestra indicadores y permite exportar los resultados filtrados a CSV o Excel.";
+      return {
+        text: "Este programa lee el Excel, construye tableros por tipo de proceso, calcula vencimientos, muestra indicadores, permite filtrar por estatus y estado, exportar resultados y consultar el analisis desde este asistente."
+      };
     }
 
     if (q.includes("leiste el excel") || q.includes("leer el excel") || q.includes("leiste el archivo") || q.includes("archivo cargado")) {
-      return `Si. El analisis actual sale del Excel cargado en la hoja ${data.sheet_used}. Tengo ${data.source_total_rows} registros fuente y ${data.alerts_total_rows} alertas procesadas.`;
+      return {
+        text: `Si. El analisis actual sale del Excel cargado en la hoja ${data.sheet_used}. Tengo ${data.source_total_rows} registros fuente, ${data.alerts_total_rows} alertas procesadas y ${generalRecords.length} filas disponibles en la vista general.`
+      };
     }
 
     if (q.includes("hoja") || q.includes("sheet")) {
-      return `La hoja analizada es: ${data.sheet_used}. Registros fuente: ${data.source_total_rows}. Alertas procesadas: ${data.alerts_total_rows}.`;
+      return {
+        text: `La hoja analizada es: ${data.sheet_used}. Registros fuente: ${data.source_total_rows}. Alertas procesadas: ${data.alerts_total_rows}.`
+      };
     }
 
     if (q.includes("tableros") || q.includes("tablero")) {
-      const names = data.tableros.map((b) => b.title).join(" | ");
-      return `Tableros disponibles: ${names}.`;
+      const names = ["Tablero General", ...data.tableros.map((b) => b.title)].join(" | ");
+      return { text: `Tableros disponibles: ${names}.` };
     }
 
     if (q.includes("resumen") || q.includes("analisis") || q.includes("metricas") || q.includes("estado actual")) {
-      return `Resumen actual: total ${filteredTotals.alertas_total}, vencidas ${filteredTotals.vencidas}, 0-10 dias ${filteredTotals.por_vencer_0_10}, 11-30 dias ${filteredTotals.rango_11_30}, 31-60 dias ${filteredTotals.rango_31_60}, 61-150 dias ${filteredTotals.rango_61_150}.`;
+      return {
+        text: `Resumen actual: total ${filteredTotals.alertas_total}, vencidas ${filteredTotals.vencidas}, 0-10 dias ${filteredTotals.por_vencer_0_10}, 11-30 dias ${filteredTotals.rango_11_30}, 31-60 dias ${filteredTotals.rango_31_60}, 61-150 dias ${filteredTotals.rango_61_150}.`
+      };
     }
 
     if (q.includes("pendiente por asignar") || q.includes("asignacion") || q.includes("proyeccion")) {
@@ -860,15 +951,17 @@ export default function HomePage() {
           if (label.includes("(proyeccion)")) proyeccion += Number(row.total_general || 0);
         }
       }
-      return `En los tableros actuales hay ${pendientes} casos como "Pendiente por asignar" y ${proyeccion} casos marcados en "Proyeccion".`;
+      return {
+        text: `En los tableros actuales hay ${pendientes} casos como "Pendiente por asignar" y ${proyeccion} casos marcados en "Proyeccion".`
+      };
     }
 
     if (q.includes("vencidas")) {
-      return `Alertas vencidas en el analisis filtrado: ${filteredTotals.vencidas}.`;
+      return { text: `Alertas vencidas en el analisis filtrado: ${filteredTotals.vencidas}.` };
     }
 
     if (q.includes("0 a 10") || q.includes("por vencer")) {
-      return `Alertas en rango 0 a 10 dias: ${filteredTotals.por_vencer_0_10}.`;
+      return { text: `Alertas en rango 0 a 10 dias: ${filteredTotals.por_vencer_0_10}.` };
     }
 
     if (matchedResponsable && !asksWho && !asksHowMany) {
@@ -876,12 +969,15 @@ export default function HomePage() {
       const vencidas = personRows.filter((row) => Number(row.DiasInt) < 0).length;
       const proximas = personRows.filter((row) => Number(row.DiasInt) >= 0 && Number(row.DiasInt) <= 10).length;
       const tipos = Array.from(new Set(personRows.map((row) => row.Tipo).filter(Boolean))).join(", ");
-      return `${matchedResponsable} tiene ${personRows.length} alertas en total. Vencidas: ${vencidas}. Entre 0 y 10 dias: ${proximas}. Tipos detectados: ${tipos || "sin tipo"}.`;
+      return {
+        text: `${matchedResponsable} tiene ${personRows.length} alertas en total. Vencidas: ${vencidas}. Entre 0 y 10 dias: ${proximas}. Tipos detectados: ${tipos || "sin tipo"}.`,
+        context: { rows: personRows, scope: "analisis", summary: `Responsable ${matchedResponsable}` }
+      };
     }
 
     if (mentionedDay !== null && asksWho) {
       if (!scopedRows.length) {
-        return `No encontre responsables con alertas para ${mentionedDay} dias${askedTipo ? ` en ${askedTipo}` : ""}.`;
+        return { text: `No encontre responsables con alertas para ${mentionedDay} dias${askedTipo ? ` en ${askedTipo}` : ""}.` };
       }
       const byResp = new Map<string, number>();
       for (const row of scopedRows) {
@@ -892,16 +988,22 @@ export default function HomePage() {
         .slice(0, 8)
         .map(([name, count]) => `${name}: ${count}`)
         .join(" | ");
-      return `Responsables con alertas para ${mentionedDay} dias${askedTipo ? ` en ${askedTipo}` : ""}: ${ordered}.`;
+      return {
+        text: `Responsables con alertas para ${mentionedDay} dias${askedTipo ? ` en ${askedTipo}` : ""}: ${ordered}.`,
+        context: { rows: scopedRows, scope: sourceScope, summary: `Alertas para ${mentionedDay} dias` }
+      };
     }
 
     if (mentionedDay !== null && asksHowMany) {
-      return `Hay ${scopedRows.length} alertas${askedTipo ? ` de tipo ${askedTipo}` : ""} para ${mentionedDay} dias.`;
+      return {
+        text: `Hay ${scopedRows.length} alertas${askedTipo ? ` de tipo ${askedTipo}` : ""} para ${mentionedDay} dias.`,
+        context: { rows: scopedRows, scope: sourceScope, summary: `Conteo ${mentionedDay} dias` }
+      };
     }
 
     if (asksWho && asksPending) {
       if (!scopedRows.length) {
-        return "No encontre responsables para esa condicion.";
+        return { text: "No encontre responsables para esa condicion." };
       }
       const grouped = new Map<string, number>();
       for (const row of scopedRows) {
@@ -912,7 +1014,10 @@ export default function HomePage() {
         .slice(0, 10)
         .map(([name, count]) => `${name}: ${count}`)
         .join(" | ");
-      return `Responsables encontrados: ${summary}.`;
+      return {
+        text: `Responsables encontrados: ${summary}.`,
+        context: { rows: scopedRows, scope: sourceScope, summary: "Responsables pendientes" }
+      };
     }
 
     if ((q.includes("cuenta") || q.includes("contrato")) && daysFound.length) {
@@ -921,13 +1026,16 @@ export default function HomePage() {
         .map((row) => `${row["Cuenta Contrato"]} (${row.Responsable}, ${row.DiasInt} dias)`)
         .join(" | ");
       return cuentas
-        ? `Cuentas encontradas: ${cuentas}.`
-        : "No encontre cuentas contrato con esa condicion.";
+        ? {
+            text: `Cuentas encontradas: ${cuentas}.`,
+            context: { rows: scopedRows, scope: sourceScope, summary: "Cuentas filtradas" }
+          }
+        : { text: "No encontre cuentas contrato con esa condicion." };
     }
 
     if (q.includes("ciudad")) {
       if (!scopedRows.length) {
-        return "No encontre ciudades para esa condicion.";
+        return { text: "No encontre ciudades para esa condicion." };
       }
       const byCity = new Map<string, number>();
       for (const row of scopedRows) {
@@ -938,31 +1046,83 @@ export default function HomePage() {
         .slice(0, 8)
         .map(([name, count]) => `${name}: ${count}`)
         .join(" | ");
-      return `Distribucion por ciudad: ${summary}.`;
+      return {
+        text: `Distribucion por ciudad: ${summary}.`,
+        context: { rows: scopedRows, scope: sourceScope, summary: "Distribucion por ciudad" }
+      };
+    }
+
+    if (q.includes("top") || q.includes("mas") || q.includes("mayor")) {
+      const grouped = new Map<string, number>();
+      for (const row of scopedRows) {
+        grouped.set(row.Responsable, (grouped.get(row.Responsable) ?? 0) + 1);
+      }
+      const top = Array.from(grouped.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 6)
+        .map(([name, count]) => `${name}: ${count}`)
+        .join(" | ");
+      if (top) {
+        return {
+          text: `Top encontrados: ${top}.`,
+          context: { rows: scopedRows, scope: sourceScope, summary: "Top responsables" }
+        };
+      }
     }
 
     if (q.includes("estatus") || q.includes("estado")) {
-      if (!scopedRows.length) {
-        return "No encontre registros con ese estatus o estado.";
+      const baseRows = isFollowUp && chatContextRef.current?.rows?.length
+        ? (chatContextRef.current.rows as typeof normalizedGeneralRecords)
+        : normalizedGeneralRecords;
+      const keyword = matchedEstatus || matchedEstado || askedStatusKeyword || askedEstadoKeyword;
+      const found = keyword
+        ? baseRows.filter((row) => row._estatus.includes(keyword) || row._estado.includes(keyword))
+        : baseRows;
+      if (!found.length) {
+        return { text: "No encontre registros con ese estatus o estado." };
       }
-      const sample = scopedRows
+      const sample = found
         .slice(0, 8)
-        .map((row) => `${row.Responsable} | ${row.Estatus} | ${row.DiasInt} dias`)
+        .map((row) => `${row["Cuenta Contrato"] || "Sin cuenta"} | ${row.Estatus || "Sin estatus"} | ${row.Estado || "Sin estado"}`)
         .join(" | ");
-      return `Registros encontrados: ${sample}.`;
+      return {
+        text: `Registros encontrados: ${sample}.`,
+        context: { rows: found, scope: "general", summary: `Filtro por estatus/estado ${keyword || ""}`.trim() }
+      };
     }
 
-    return "Puedo responder sobre el Excel cargado y el analisis actual. Prueba preguntas como: quien tiene 10 dias, cuantas alertas penales hay, que tiene Marcela pendiente, cuentas con 30 dias, ciudades con mas pendientes, o cuantos casos estan pendientes por asignar.";
+    if (q.includes("columna") || q.includes("columnas") || q.includes("campos")) {
+      return { text: `Columnas disponibles en la lectura fuente: ${data.source_columns.join(" | ")}.` };
+    }
+
+    if (q.includes("filtro") || q.includes("filtros")) {
+      return {
+        text: "Puedes filtrar en el programa por tipo, responsable, ciudad, rango de dias, estatus y estado. El Tablero General concentra filtros por tipo, estatus, estado, responsable y busqueda libre."
+      };
+    }
+
+    if (q.includes("ejemplo") || q.includes("que te puedo preguntar")) {
+      return {
+        text: "Puedes preguntar: quien tiene 15 dias, cuantos penales hay vencidos, que tiene Lady pendiente, cuales cuentas estan en Bogota, que estados aparecen, cuales son los responsables con mas carga, o y de esos cuales son administrativos."
+      };
+    }
+
+    return {
+      text: "Puedo responder casi cualquier consulta sobre el programa y el analisis cargado. Prueba preguntas sobre responsables, dias, tipos, estatus, estado, cuentas, ciudades, columnas, filtros o usa seguimientos como: y de esos cuales son penales."
+    };
   };
 
   const onSendChat = () => {
     const text = chatInput.trim();
     if (!text) return;
     const reply = buildChatReply(text);
+    if (reply.context) {
+      chatContextRef.current = reply.context;
+    }
     setChatMessages((prev) => [
       ...prev,
       { id: Date.now(), role: "user", text },
-      { id: Date.now() + 1, role: "assistant", text: reply }
+      { id: Date.now() + 1, role: "assistant", text: reply.text }
     ]);
     setChatInput("");
   };
@@ -1413,7 +1573,10 @@ export default function HomePage() {
             <p className="text-sm font-semibold">Asistente IA</p>
             <button
               type="button"
-              onClick={() => setChatMessages([{ id: Date.now(), role: "assistant", text: "Chat reiniciado. Preguntame lo que necesites sobre el tablero." }])}
+              onClick={() => {
+                chatContextRef.current = null;
+                setChatMessages([{ id: Date.now(), role: "assistant", text: "Chat reiniciado. Preguntame lo que necesites sobre el tablero." }]);
+              }}
               className={`rounded-lg px-2 py-1 text-xs ${darkMode ? "bg-slate-800 hover:bg-slate-700" : "bg-slate-100 hover:bg-slate-200"}`}
             >
               Limpiar
