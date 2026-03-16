@@ -547,6 +547,38 @@ def build_general_records(df: pd.DataFrame) -> list[dict[str, Any]]:
     return out.to_dict(orient="records")
 
 
+def build_general_board_records(all_alerts: pd.DataFrame) -> list[dict[str, Any]]:
+    if all_alerts.empty:
+        return []
+    work = all_alerts.copy()
+    work["Dias"] = pd.to_numeric(work["Dias"], errors="coerce")
+    work = work[work["Dias"].notna()].copy()
+    work["DiasInt"] = work["Dias"].astype(int)
+    work = explode_by_responsable(work, "Responsable")
+    if work.empty:
+        return []
+
+    for optional_col, default_value in [
+        ("Tipo", ""),
+        ("Responsable", ""),
+        ("Estatus", ""),
+        ("Estado", ""),
+        ("Ciudad", ""),
+        ("Cuenta Contrato", ""),
+    ]:
+        if optional_col not in work.columns:
+            work[optional_col] = default_value
+
+    out = work[["Tipo", "Responsable", "Estatus", "Estado", "DiasInt", "Ciudad", "Cuenta Contrato"]].copy()
+    out["Tipo"] = out["Tipo"].astype(str).str.strip()
+    out["Responsable"] = out["Responsable"].astype(str).str.strip()
+    out["Estatus"] = out["Estatus"].astype(str).str.strip()
+    out["Estado"] = out["Estado"].astype(str).str.strip()
+    out["Ciudad"] = out["Ciudad"].astype(str).str.strip()
+    out["Cuenta Contrato"] = out["Cuenta Contrato"].astype(str).str.strip()
+    return out.to_dict(orient="records")
+
+
 def serialize_for_json(df: pd.DataFrame, limit: int = 30) -> list[dict[str, Any]]:
     sample = df.head(limit).copy()
     for col_name in sample.columns:
@@ -620,6 +652,7 @@ def process_excel_bytes(file_bytes: bytes, sheet_name: str | None) -> dict[str, 
         "alerts_total_rows": int(len(all_alerts)),
         "alerts_preview": serialize_for_json(all_alerts, limit=60),
         "general_records": build_general_records(df),
+        "general_board_records": build_general_board_records(all_alerts),
         "tableros": boards,
         "status_analysis": build_status_analysis(df),
         "control_dashboard": build_control_dashboard(pending_status_df),

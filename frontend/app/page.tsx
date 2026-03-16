@@ -45,6 +45,15 @@ type PreviewResponse = {
   source_preview: Record<string, string | number | null>[];
   alerts_preview: Record<string, string | number | null>[];
   general_records: Record<string, string | number | null>[];
+  general_board_records: {
+    Tipo: string;
+    Responsable: string;
+    Estatus: string;
+    Estado: string;
+    DiasInt: number;
+    Ciudad: string;
+    "Cuenta Contrato": string;
+  }[];
   tableros: BoardData[];
   status_analysis: {
     estatus_top: ChartPoint[];
@@ -439,6 +448,7 @@ export default function HomePage() {
   const [filterResponsable, setFilterResponsable] = useState("TODOS");
   const [filterCiudad, setFilterCiudad] = useState("TODOS");
   const [filterRangoDias, setFilterRangoDias] = useState("TODOS");
+  const [generalFilterTipo, setGeneralFilterTipo] = useState("TODOS");
   const [generalFilterEstatus, setGeneralFilterEstatus] = useState("TODOS");
   const [generalFilterEstado, setGeneralFilterEstado] = useState("TODOS");
   const [generalFilterResponsable, setGeneralFilterResponsable] = useState("TODOS");
@@ -471,6 +481,7 @@ export default function HomePage() {
       setFilterResponsable("TODOS");
       setFilterCiudad("TODOS");
       setFilterRangoDias("TODOS");
+      setGeneralFilterTipo("TODOS");
       setGeneralFilterEstatus("TODOS");
       setGeneralFilterEstado("TODOS");
       setGeneralFilterResponsable("TODOS");
@@ -480,6 +491,7 @@ export default function HomePage() {
 
   const analysisRecords = data?.analysis_records ?? [];
   const generalRecords = data?.general_records ?? [];
+  const generalBoardRecords = data?.general_board_records ?? [];
 
   const tipoOptions = useMemo(() => {
     const vals = Array.from(new Set(analysisRecords.map((r) => r.Tipo).filter(Boolean)));
@@ -510,37 +522,33 @@ export default function HomePage() {
     return vals.sort((a, b) => a.localeCompare(b, "es"));
   }, [generalRecords]);
 
-  const generalResponsableOptions = useMemo(() => {
-    const raw = generalRecords.flatMap((r) => [
-      String(r.Responsable_Administrativo ?? "").trim(),
-      String(r.Responsable_Penal ?? "").trim(),
-      String(r.Liquidacion ?? "").trim()
-    ]);
-    return Array.from(new Set(raw.filter(Boolean))).sort((a, b) => a.localeCompare(b, "es"));
-  }, [generalRecords]);
+  const generalTipoOptions = useMemo(() => {
+    const vals = Array.from(new Set(generalBoardRecords.map((r) => String(r.Tipo ?? "").trim()).filter(Boolean)));
+    return vals.sort((a, b) => a.localeCompare(b, "es"));
+  }, [generalBoardRecords]);
 
-  const filteredGeneralRecords = useMemo(() => {
+  const generalResponsableOptions = useMemo(() => {
+    const raw = generalBoardRecords.map((r) => String(r.Responsable ?? "").trim());
+    return Array.from(new Set(raw.filter(Boolean))).sort((a, b) => a.localeCompare(b, "es"));
+  }, [generalBoardRecords]);
+
+  const filteredGeneralBoardRecords = useMemo(() => {
     const search = generalSearch
       .toLowerCase()
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "")
       .trim();
 
-    return generalRecords.filter((row) => {
+    return generalBoardRecords.filter((row) => {
+      const tipo = String(row.Tipo ?? "").trim();
       const estatus = String(row.Estatus ?? "").trim();
       const estado = String(row.Estado ?? "").trim();
-      const respAdm = String(row.Responsable_Administrativo ?? "").trim();
-      const respPen = String(row.Responsable_Penal ?? "").trim();
-      const liquidacion = String(row.Liquidacion ?? "").trim();
+      const responsable = String(row.Responsable ?? "").trim();
 
+      if (generalFilterTipo !== "TODOS" && tipo !== generalFilterTipo) return false;
       if (generalFilterEstatus !== "TODOS" && estatus !== generalFilterEstatus) return false;
       if (generalFilterEstado !== "TODOS" && estado !== generalFilterEstado) return false;
-      if (
-        generalFilterResponsable !== "TODOS" &&
-        respAdm !== generalFilterResponsable &&
-        respPen !== generalFilterResponsable &&
-        liquidacion !== generalFilterResponsable
-      ) {
+      if (generalFilterResponsable !== "TODOS" && responsable !== generalFilterResponsable) {
         return false;
       }
 
@@ -556,12 +564,84 @@ export default function HomePage() {
         .join(" ");
       return haystack.includes(search);
     });
-  }, [generalRecords, generalFilterEstatus, generalFilterEstado, generalFilterResponsable, generalSearch]);
+  }, [generalBoardRecords, generalFilterTipo, generalFilterEstatus, generalFilterEstado, generalFilterResponsable, generalSearch]);
 
-  const generalHeaders = useMemo(
-    () => (generalRecords.length ? Object.keys(generalRecords[0]) : []),
-    [generalRecords]
-  );
+  const generalBoard = useMemo<BoardData>(() => {
+    if (!filteredGeneralBoardRecords.length) {
+      return {
+        key: "general_board",
+        title: "Tablero General",
+        description: "Vista consolidada con filtros por tipo, estatus y estado.",
+        day_columns: [],
+        rows: [],
+        totals: { vencidos: 0, total_general: 0, counts: {} }
+      };
+    }
+
+    const dayColumns = Array.from(
+      new Set(
+        filteredGeneralBoardRecords
+          .map((row) => Number(row.DiasInt))
+          .filter((value) => Number.isFinite(value) && value >= 0 && value <= 150)
+      )
+    ).sort((a, b) => a - b);
+
+    const orderedDayColumns = dayColumns.length <= 32 ? dayColumns : [...dayColumns.slice(0, 24), 30, 45, 60, 90, 120, 150]
+      .filter((value, index, arr) => arr.indexOf(value) === index)
+      .sort((a, b) => a - b);
+
+    const byResponsable = new Map<string, typeof filteredGeneralBoardRecords>();
+    for (const row of filteredGeneralBoardRecords) {
+      const key = String(row.Responsable || "").trim() || "Sin responsable";
+      const current = byResponsable.get(key) ?? [];
+      current.push(row);
+      byResponsable.set(key, current);
+    }
+
+    const rows = Array.from(byResponsable.entries())
+      .sort((a, b) => a[0].localeCompare(b[0], "es"))
+      .map(([responsable, entries]) => {
+        const counts: Record<string, number> = {};
+        for (const day of orderedDayColumns) counts[String(day)] = 0;
+        let vencidos = 0;
+        for (const entry of entries) {
+          const d = Number(entry.DiasInt);
+          if (d < 0) vencidos += 1;
+          if (orderedDayColumns.includes(d)) counts[String(d)] = (counts[String(d)] ?? 0) + 1;
+        }
+        return {
+          responsable,
+          vencidos,
+          total_general: entries.length,
+          counts
+        };
+      });
+
+    const totalsCounts: Record<string, number> = {};
+    for (const day of orderedDayColumns) totalsCounts[String(day)] = 0;
+    let totalVencidos = 0;
+    let totalGeneral = 0;
+    for (const row of rows) {
+      totalVencidos += row.vencidos;
+      totalGeneral += row.total_general;
+      for (const day of orderedDayColumns) {
+        totalsCounts[String(day)] += row.counts[String(day)] ?? 0;
+      }
+    }
+
+    return {
+      key: "general_board",
+      title: "Tablero General",
+      description: "Vista consolidada filtrable por tipo, estatus y estado.",
+      day_columns: orderedDayColumns,
+      rows,
+      totals: {
+        vencidos: totalVencidos,
+        total_general: totalGeneral,
+        counts: totalsCounts
+      }
+    };
+  }, [filteredGeneralBoardRecords]);
 
   const filteredRecords = useMemo(() => {
     return analysisRecords.filter((r) => {
@@ -1065,10 +1145,21 @@ export default function HomePage() {
                 Tablero General
               </h2>
               <p className={`mt-1 text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
-                Vista general del archivo con filtros tipo Excel para localizar pendientes por Estatus, Estado y responsable.
+                Mismo formato de tablero, con filtros para mostrar solo los responsables que cumplen el tipo, estatus y estado seleccionados.
               </p>
             </div>
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+              <div>
+                <label className={`mb-1 block text-xs font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Tipo</label>
+                <select
+                  value={generalFilterTipo}
+                  onChange={(e) => setGeneralFilterTipo(e.target.value)}
+                  className={`w-full rounded-lg border px-3 py-2 text-sm ${darkMode ? "border-slate-700 bg-slate-900/80 text-slate-100" : "border-slate-300 text-slate-800"}`}
+                >
+                  <option value="TODOS">Todos</option>
+                  {generalTipoOptions.map((item) => <option key={item} value={item}>{item}</option>)}
+                </select>
+              </div>
               <div>
                 <label className={`mb-1 block text-xs font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Estatus</label>
                 <select
@@ -1117,78 +1208,30 @@ export default function HomePage() {
 
           <div className="mt-4 grid gap-3 sm:grid-cols-3">
             <div className={`rounded-2xl border p-4 ${darkMode ? "border-slate-700 bg-slate-900/60" : "border-slate-200 bg-slate-50"}`}>
-              <p className={`text-xs uppercase tracking-[0.18em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Filas visibles</p>
-              <p className={`mt-2 text-3xl font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{filteredGeneralRecords.length}</p>
+              <p className={`text-xs uppercase tracking-[0.18em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Responsables visibles</p>
+              <p className={`mt-2 text-3xl font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{generalBoard.rows.length}</p>
             </div>
             <div className={`rounded-2xl border p-4 ${darkMode ? "border-slate-700 bg-slate-900/60" : "border-slate-200 bg-slate-50"}`}>
-              <p className={`text-xs uppercase tracking-[0.18em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Total archivo</p>
-              <p className={`mt-2 text-3xl font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{generalRecords.length}</p>
+              <p className={`text-xs uppercase tracking-[0.18em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Alertas visibles</p>
+              <p className={`mt-2 text-3xl font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{generalBoard.totals.total_general}</p>
             </div>
             <div className={`rounded-2xl border p-4 ${darkMode ? "border-slate-700 bg-slate-900/60" : "border-slate-200 bg-slate-50"}`}>
               <p className={`text-xs uppercase tracking-[0.18em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Lectura activa</p>
               <p className={`mt-2 text-sm font-semibold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>
+                {generalFilterTipo === "TODOS" ? "Todos los tipos" : generalFilterTipo}
+                {" / "}
                 {generalFilterEstatus === "TODOS" ? "Todos los estatus" : generalFilterEstatus}
                 {" / "}
                 {generalFilterEstado === "TODOS" ? "Todos los estados" : generalFilterEstado}
               </p>
             </div>
           </div>
+        </section>
+      )}
 
-          <div className={`mt-5 overflow-auto rounded-2xl border ${darkMode ? "border-slate-700/80" : "border-slate-200"}`}>
-            <table className="min-w-full text-sm">
-              <thead className={darkMode ? "bg-slate-900/90" : "bg-brand-50"}>
-                <tr>
-                  {generalHeaders.map((header) => (
-                    <th
-                      key={header}
-                      className={`whitespace-nowrap px-3 py-3 text-left text-xs font-semibold uppercase tracking-[0.16em] ${darkMode ? "text-brand-200" : "text-brand-900"}`}
-                    >
-                      {header.replaceAll("_", " ")}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {filteredGeneralRecords.length === 0 && (
-                  <tr>
-                    <td
-                      colSpan={Math.max(generalHeaders.length, 1)}
-                      className={`px-4 py-8 text-center text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}
-                    >
-                      No hay filas para los filtros seleccionados.
-                    </td>
-                  </tr>
-                )}
-                {filteredGeneralRecords.map((row, index) => (
-                  <tr
-                    key={`general-${index}`}
-                    className={`${darkMode ? "border-slate-800/90 odd:bg-slate-900/30 even:bg-slate-900/70" : "border-slate-100 odd:bg-white even:bg-slate-50/60"} border-t`}
-                  >
-                    {generalHeaders.map((header) => {
-                      const value = row[header];
-                      const isStatus = header === "Estatus" || header === "Estado";
-                      return (
-                        <td
-                          key={`${index}-${header}`}
-                          className={`whitespace-nowrap px-3 py-2.5 ${darkMode ? "text-slate-200" : "text-slate-700"}`}
-                        >
-                          {isStatus ? (
-                            <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
-                              darkMode ? "bg-slate-800 text-slate-100" : "bg-slate-100 text-slate-800"
-                            }`}>
-                              {String(value ?? "") || "-"}
-                            </span>
-                          ) : (
-                            String(value ?? "") || "-"
-                          )}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+      {data && (
+        <section className="mb-8">
+          <BoardTable board={generalBoard} darkMode={darkMode} />
         </section>
       )}
 
