@@ -44,6 +44,7 @@ type PreviewResponse = {
   alerts_total_rows: number;
   source_preview: Record<string, string | number | null>[];
   alerts_preview: Record<string, string | number | null>[];
+  general_records: Record<string, string | number | null>[];
   tableros: BoardData[];
   status_analysis: {
     estatus_top: ChartPoint[];
@@ -438,6 +439,10 @@ export default function HomePage() {
   const [filterResponsable, setFilterResponsable] = useState("TODOS");
   const [filterCiudad, setFilterCiudad] = useState("TODOS");
   const [filterRangoDias, setFilterRangoDias] = useState("TODOS");
+  const [generalFilterEstatus, setGeneralFilterEstatus] = useState("TODOS");
+  const [generalFilterEstado, setGeneralFilterEstado] = useState("TODOS");
+  const [generalFilterResponsable, setGeneralFilterResponsable] = useState("TODOS");
+  const [generalSearch, setGeneralSearch] = useState("");
   const [chatOpen, setChatOpen] = useState(false);
   const [chatInput, setChatInput] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
@@ -466,10 +471,15 @@ export default function HomePage() {
       setFilterResponsable("TODOS");
       setFilterCiudad("TODOS");
       setFilterRangoDias("TODOS");
+      setGeneralFilterEstatus("TODOS");
+      setGeneralFilterEstado("TODOS");
+      setGeneralFilterResponsable("TODOS");
+      setGeneralSearch("");
     }
   }, [data]);
 
   const analysisRecords = data?.analysis_records ?? [];
+  const generalRecords = data?.general_records ?? [];
 
   const tipoOptions = useMemo(() => {
     const vals = Array.from(new Set(analysisRecords.map((r) => r.Tipo).filter(Boolean)));
@@ -485,6 +495,73 @@ export default function HomePage() {
     const vals = Array.from(new Set(analysisRecords.map((r) => r.Ciudad).filter(Boolean)));
     return vals.sort();
   }, [analysisRecords]);
+
+  const generalEstatusOptions = useMemo(() => {
+    const vals = Array.from(
+      new Set(generalRecords.map((r) => String(r.Estatus ?? "").trim()).filter(Boolean))
+    );
+    return vals.sort((a, b) => a.localeCompare(b, "es"));
+  }, [generalRecords]);
+
+  const generalEstadoOptions = useMemo(() => {
+    const vals = Array.from(
+      new Set(generalRecords.map((r) => String(r.Estado ?? "").trim()).filter(Boolean))
+    );
+    return vals.sort((a, b) => a.localeCompare(b, "es"));
+  }, [generalRecords]);
+
+  const generalResponsableOptions = useMemo(() => {
+    const raw = generalRecords.flatMap((r) => [
+      String(r.Responsable_Administrativo ?? "").trim(),
+      String(r.Responsable_Penal ?? "").trim(),
+      String(r.Liquidacion ?? "").trim()
+    ]);
+    return Array.from(new Set(raw.filter(Boolean))).sort((a, b) => a.localeCompare(b, "es"));
+  }, [generalRecords]);
+
+  const filteredGeneralRecords = useMemo(() => {
+    const search = generalSearch
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .trim();
+
+    return generalRecords.filter((row) => {
+      const estatus = String(row.Estatus ?? "").trim();
+      const estado = String(row.Estado ?? "").trim();
+      const respAdm = String(row.Responsable_Administrativo ?? "").trim();
+      const respPen = String(row.Responsable_Penal ?? "").trim();
+      const liquidacion = String(row.Liquidacion ?? "").trim();
+
+      if (generalFilterEstatus !== "TODOS" && estatus !== generalFilterEstatus) return false;
+      if (generalFilterEstado !== "TODOS" && estado !== generalFilterEstado) return false;
+      if (
+        generalFilterResponsable !== "TODOS" &&
+        respAdm !== generalFilterResponsable &&
+        respPen !== generalFilterResponsable &&
+        liquidacion !== generalFilterResponsable
+      ) {
+        return false;
+      }
+
+      if (!search) return true;
+
+      const haystack = Object.values(row)
+        .map((value) =>
+          String(value ?? "")
+            .toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+        )
+        .join(" ");
+      return haystack.includes(search);
+    });
+  }, [generalRecords, generalFilterEstatus, generalFilterEstado, generalFilterResponsable, generalSearch]);
+
+  const generalHeaders = useMemo(
+    () => (generalRecords.length ? Object.keys(generalRecords[0]) : []),
+    [generalRecords]
+  );
 
   const filteredRecords = useMemo(() => {
     return analysisRecords.filter((r) => {
@@ -977,6 +1054,141 @@ export default function HomePage() {
           <div className="card p-4"><p className={`text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Hoja leida</p><p className={`mt-1 text-lg font-semibold ${darkMode ? "text-slate-100" : "text-ink"}`}>{data.sheet_used}</p></div>
           <div className="card p-4"><p className={`text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Registros fuente</p><p className={`mt-1 text-lg font-semibold ${darkMode ? "text-slate-100" : "text-ink"}`}>{data.source_total_rows}</p></div>
           <div className="card p-4"><p className={`text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Alertas</p><p className={`mt-1 text-lg font-semibold ${darkMode ? "text-slate-100" : "text-ink"}`}>{data.alerts_total_rows}</p></div>
+        </section>
+      )}
+
+      {data && (
+        <section className="card mb-8 p-6">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <h2 className={`text-xl font-semibold ${darkMode ? "text-slate-100" : "text-ink"}`}>
+                Tablero General
+              </h2>
+              <p className={`mt-1 text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                Vista general del archivo con filtros tipo Excel para localizar pendientes por Estatus, Estado y responsable.
+              </p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <div>
+                <label className={`mb-1 block text-xs font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Estatus</label>
+                <select
+                  value={generalFilterEstatus}
+                  onChange={(e) => setGeneralFilterEstatus(e.target.value)}
+                  className={`w-full rounded-lg border px-3 py-2 text-sm ${darkMode ? "border-slate-700 bg-slate-900/80 text-slate-100" : "border-slate-300 text-slate-800"}`}
+                >
+                  <option value="TODOS">Todos</option>
+                  {generalEstatusOptions.map((item) => <option key={item} value={item}>{item}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className={`mb-1 block text-xs font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Estado</label>
+                <select
+                  value={generalFilterEstado}
+                  onChange={(e) => setGeneralFilterEstado(e.target.value)}
+                  className={`w-full rounded-lg border px-3 py-2 text-sm ${darkMode ? "border-slate-700 bg-slate-900/80 text-slate-100" : "border-slate-300 text-slate-800"}`}
+                >
+                  <option value="TODOS">Todos</option>
+                  {generalEstadoOptions.map((item) => <option key={item} value={item}>{item}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className={`mb-1 block text-xs font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Responsable</label>
+                <select
+                  value={generalFilterResponsable}
+                  onChange={(e) => setGeneralFilterResponsable(e.target.value)}
+                  className={`w-full rounded-lg border px-3 py-2 text-sm ${darkMode ? "border-slate-700 bg-slate-900/80 text-slate-100" : "border-slate-300 text-slate-800"}`}
+                >
+                  <option value="TODOS">Todos</option>
+                  {generalResponsableOptions.map((item) => <option key={item} value={item}>{item}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className={`mb-1 block text-xs font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Busqueda</label>
+                <input
+                  type="text"
+                  value={generalSearch}
+                  onChange={(e) => setGeneralSearch(e.target.value)}
+                  placeholder="Cuenta, ciudad, estado..."
+                  className={`w-full rounded-lg border px-3 py-2 text-sm ${darkMode ? "border-slate-700 bg-slate-900/80 text-slate-100" : "border-slate-300 text-slate-800"}`}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            <div className={`rounded-2xl border p-4 ${darkMode ? "border-slate-700 bg-slate-900/60" : "border-slate-200 bg-slate-50"}`}>
+              <p className={`text-xs uppercase tracking-[0.18em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Filas visibles</p>
+              <p className={`mt-2 text-3xl font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{filteredGeneralRecords.length}</p>
+            </div>
+            <div className={`rounded-2xl border p-4 ${darkMode ? "border-slate-700 bg-slate-900/60" : "border-slate-200 bg-slate-50"}`}>
+              <p className={`text-xs uppercase tracking-[0.18em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Total archivo</p>
+              <p className={`mt-2 text-3xl font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{generalRecords.length}</p>
+            </div>
+            <div className={`rounded-2xl border p-4 ${darkMode ? "border-slate-700 bg-slate-900/60" : "border-slate-200 bg-slate-50"}`}>
+              <p className={`text-xs uppercase tracking-[0.18em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Lectura activa</p>
+              <p className={`mt-2 text-sm font-semibold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>
+                {generalFilterEstatus === "TODOS" ? "Todos los estatus" : generalFilterEstatus}
+                {" / "}
+                {generalFilterEstado === "TODOS" ? "Todos los estados" : generalFilterEstado}
+              </p>
+            </div>
+          </div>
+
+          <div className={`mt-5 overflow-auto rounded-2xl border ${darkMode ? "border-slate-700/80" : "border-slate-200"}`}>
+            <table className="min-w-full text-sm">
+              <thead className={darkMode ? "bg-slate-900/90" : "bg-brand-50"}>
+                <tr>
+                  {generalHeaders.map((header) => (
+                    <th
+                      key={header}
+                      className={`whitespace-nowrap px-3 py-3 text-left text-xs font-semibold uppercase tracking-[0.16em] ${darkMode ? "text-brand-200" : "text-brand-900"}`}
+                    >
+                      {header.replaceAll("_", " ")}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {filteredGeneralRecords.length === 0 && (
+                  <tr>
+                    <td
+                      colSpan={Math.max(generalHeaders.length, 1)}
+                      className={`px-4 py-8 text-center text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}
+                    >
+                      No hay filas para los filtros seleccionados.
+                    </td>
+                  </tr>
+                )}
+                {filteredGeneralRecords.map((row, index) => (
+                  <tr
+                    key={`general-${index}`}
+                    className={`${darkMode ? "border-slate-800/90 odd:bg-slate-900/30 even:bg-slate-900/70" : "border-slate-100 odd:bg-white even:bg-slate-50/60"} border-t`}
+                  >
+                    {generalHeaders.map((header) => {
+                      const value = row[header];
+                      const isStatus = header === "Estatus" || header === "Estado";
+                      return (
+                        <td
+                          key={`${index}-${header}`}
+                          className={`whitespace-nowrap px-3 py-2.5 ${darkMode ? "text-slate-200" : "text-slate-700"}`}
+                        >
+                          {isStatus ? (
+                            <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
+                              darkMode ? "bg-slate-800 text-slate-100" : "bg-slate-100 text-slate-800"
+                            }`}>
+                              {String(value ?? "") || "-"}
+                            </span>
+                          ) : (
+                            String(value ?? "") || "-"
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </section>
       )}
 

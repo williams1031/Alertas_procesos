@@ -474,6 +474,79 @@ def build_analysis_records(all_alerts: pd.DataFrame) -> list[dict[str, Any]]:
     return out.to_dict(orient="records")
 
 
+def build_general_records(df: pd.DataFrame) -> list[dict[str, Any]]:
+    if df.empty:
+        return []
+
+    optional_columns = [
+        ("Aviso_T2", "Aviso"),
+        ("Aviso", "Aviso"),
+        ("Cuenta Contrato", "Cuenta Contrato"),
+        ("Interlocutor", "Interlocutor"),
+        ("Dirección", "Direccion"),
+        ("DirecciÃ³n", "Direccion"),
+        ("Ciudad", "Ciudad"),
+        ("Estatus", "Estatus"),
+        ("Estado", "Estado"),
+        ("Responsable Administrativo", "Responsable_Administrativo"),
+        ("Responsable Penal", "Responsable_Penal"),
+        ("Liquidación", "Liquidacion"),
+        ("LiquidaciÃ³n", "Liquidacion"),
+        ("Fecha de Vencimiento", "Fecha_Vencimiento_Admin"),
+        ("DÍAS", "Dias_Admin"),
+        ("DÃAS", "Dias_Admin"),
+        ("Fecha de Vencimiento.1", "Fecha_Vencimiento_Penal"),
+        ("DÍAS.1", "Dias_Penal"),
+        ("DÃAS.1", "Dias_Penal"),
+        ("ANALISIS", "Analisis"),
+    ]
+
+    selected: dict[str, str] = {}
+    for source_name, target_name in optional_columns:
+        found = find_column([str(c) for c in df.columns], source_name)
+        if found is not None and target_name not in selected.values():
+            selected[found] = target_name
+
+    if not selected:
+        return []
+
+    out = df[list(selected.keys())].rename(columns=selected).copy()
+    out.insert(0, "Fila", list(range(1, len(out) + 1)))
+
+    for col_name in out.columns:
+        if "Fecha" in col_name:
+            out[col_name] = pd.to_datetime(out[col_name], errors="coerce").dt.strftime("%Y-%m-%d")
+        else:
+            out[col_name] = out[col_name].where(pd.notna(out[col_name]), "")
+            out[col_name] = out[col_name].astype(str).str.strip()
+
+    if "Aviso" not in out.columns:
+        out["Aviso"] = ""
+
+    preferred_order = [
+        "Fila",
+        "Aviso",
+        "Cuenta Contrato",
+        "Interlocutor",
+        "Direccion",
+        "Ciudad",
+        "Estatus",
+        "Estado",
+        "Responsable_Administrativo",
+        "Responsable_Penal",
+        "Liquidacion",
+        "Fecha_Vencimiento_Admin",
+        "Dias_Admin",
+        "Fecha_Vencimiento_Penal",
+        "Dias_Penal",
+        "Analisis",
+    ]
+    ordered = [col_name for col_name in preferred_order if col_name in out.columns]
+    remainder = [col_name for col_name in out.columns if col_name not in ordered]
+    out = out[ordered + remainder]
+    return out.to_dict(orient="records")
+
+
 def serialize_for_json(df: pd.DataFrame, limit: int = 30) -> list[dict[str, Any]]:
     sample = df.head(limit).copy()
     for col_name in sample.columns:
@@ -546,6 +619,7 @@ def process_excel_bytes(file_bytes: bytes, sheet_name: str | None) -> dict[str, 
         "source_preview": serialize_for_json(df, limit=20),
         "alerts_total_rows": int(len(all_alerts)),
         "alerts_preview": serialize_for_json(all_alerts, limit=60),
+        "general_records": build_general_records(df),
         "tableros": boards,
         "status_analysis": build_status_analysis(df),
         "control_dashboard": build_control_dashboard(pending_status_df),
