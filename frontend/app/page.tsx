@@ -972,6 +972,33 @@ export default function HomePage() {
       };
     }
 
+    if (
+      q === "tabla general" ||
+      q === "tablero general" ||
+      q.includes("vista general") ||
+      q.includes("resumen del tablero general") ||
+      q.includes("que muestra el tablero general")
+    ) {
+      const lecturaActiva = [
+        generalFilterTipo === "TODOS" ? "Todos los tipos" : generalFilterTipo,
+        generalFilterEstatus === "TODOS" ? "Todos los estatus" : generalFilterEstatus,
+        generalFilterEstado === "TODOS" ? "Todos los estados" : generalFilterEstado,
+        generalFilterResponsable === "TODOS" ? "Todos los responsables" : generalFilterResponsable
+      ].join(" / ");
+      const topResponsables = generalBoard.rows
+        .slice(0, 5)
+        .map((row) => `${row.responsable}: ${row.total_general}`)
+        .join(" | ");
+      return {
+        text: `Tablero General activo. Lectura: ${lecturaActiva}. Responsables visibles: ${generalBoard.rows.length}. Alertas visibles: ${filteredGeneralBoardRecords.length}. ${topResponsables ? `Responsables mostrados: ${topResponsables}.` : "No hay filas visibles con esos filtros."}`,
+        context: {
+          rows: filteredGeneralBoardRecords as unknown as Array<Record<string, unknown>>,
+          scope: "general_board",
+          summary: "Tablero General activo"
+        }
+      };
+    }
+
     if (q.includes("tableros") || q.includes("tablero")) {
       const names = ["Tablero General", ...data.tableros.map((b) => b.title)].join(" | ");
       return { text: `Tableros disponibles: ${names}.` };
