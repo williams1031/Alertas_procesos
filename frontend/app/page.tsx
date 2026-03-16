@@ -468,6 +468,7 @@ export default function HomePage() {
   const [generalFilterEstado, setGeneralFilterEstado] = useState("TODOS");
   const [generalFilterResponsable, setGeneralFilterResponsable] = useState("TODOS");
   const [generalSearch, setGeneralSearch] = useState("");
+  const [statusYearFilter, setStatusYearFilter] = useState("TODOS");
   const [chatOpen, setChatOpen] = useState(false);
   const [chatInput, setChatInput] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
@@ -502,6 +503,7 @@ export default function HomePage() {
       setGeneralFilterEstado("TODOS");
       setGeneralFilterResponsable("TODOS");
       setGeneralSearch("");
+      setStatusYearFilter("TODOS");
       chatContextRef.current = null;
     }
   }, [data]);
@@ -549,6 +551,75 @@ export default function HomePage() {
       }),
     [generalRecords]
   );
+
+  const extractYearsFromRow = (row: Record<string, string | number | null>) => {
+    const years = new Set<number>();
+    for (const [key, value] of Object.entries(row)) {
+      if (!key.toLowerCase().includes("fecha")) continue;
+      const text = String(value ?? "").trim();
+      if (!text) continue;
+      const match = text.match(/\b(20\d{2})\b/);
+      if (match) {
+        years.add(Number(match[1]));
+        continue;
+      }
+      const parsed = new Date(text);
+      if (!Number.isNaN(parsed.getTime())) {
+        years.add(parsed.getFullYear());
+      }
+    }
+    return Array.from(years);
+  };
+
+  const statusYearOptions = useMemo(() => {
+    const years = new Set<number>();
+    for (const row of generalRecords) {
+      for (const year of extractYearsFromRow(row)) years.add(year);
+    }
+    return Array.from(years).sort((a, b) => a - b);
+  }, [generalRecords]);
+
+  const statusRowsByYear = useMemo(() => {
+    if (statusYearFilter === "TODOS") return generalRecords;
+    const targetYear = Number(statusYearFilter);
+    return generalRecords.filter((row) => extractYearsFromRow(row).includes(targetYear));
+  }, [generalRecords, statusYearFilter]);
+
+  const buildTopCountsFromRows = (
+    rows: Record<string, string | number | null>[],
+    column: string,
+    topN = 12
+  ): ChartPoint[] => {
+    const counts = new Map<string, number>();
+    for (const row of rows) {
+      const label = String(row[column] ?? "").trim();
+      if (!label) continue;
+      counts.set(label, (counts.get(label) ?? 0) + 1);
+    }
+    return Array.from(counts.entries())
+      .map(([label, count]) => ({ label, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, topN);
+  };
+
+  const filteredStatusAnalysis = useMemo(() => {
+    const estatusTop = buildTopCountsFromRows(statusRowsByYear, "Estatus", 12);
+    const estadoTop = buildTopCountsFromRows(statusRowsByYear, "Estado", 12);
+    const paraAdministrativo = statusRowsByYear.filter((row) =>
+      normalizeForSearch(row.Estatus).includes("para administrativo")
+    ).length;
+    const paraExpediente = statusRowsByYear.filter((row) =>
+      normalizeForSearch(row.Estatus).includes("para expediente")
+    ).length;
+    return {
+      estatus_top: estatusTop,
+      estado_top: estadoTop,
+      pendientes_status_totals: [
+        { label: "Para administrativo (incluye mixtos)", count: paraAdministrativo },
+        { label: "Para expediente (incluye mixtos)", count: paraExpediente }
+      ]
+    };
+  }, [statusRowsByYear]);
 
   const tipoOptions = useMemo(() => {
     const vals = Array.from(new Set(analysisRecords.map((r) => r.Tipo).filter(Boolean)));
@@ -1404,10 +1475,51 @@ export default function HomePage() {
       )}
 
       {data && (
-        <section className="mt-8 grid gap-6 lg:grid-cols-3">
-          <MiniBarChart title="Estatus (Top)" data={data.status_analysis.estatus_top} darkMode={darkMode} />
-          <MiniBarChart title="Estado (Top)" data={data.status_analysis.estado_top} darkMode={darkMode} />
-          <MiniBarChart title="Pendientes Clave (Totales)" data={data.status_analysis.pendientes_status_totals} darkMode={darkMode} />
+        <section className="mt-8 space-y-5">
+          <section className="card p-5">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+              <div>
+                <h2 className={`text-lg font-semibold ${darkMode ? "text-slate-100" : "text-ink"}`}>
+                  Resumen General por Ano
+                </h2>
+                <p className={`mt-1 text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                  Filtra por ano del documento para recalcular estatus, estado y pendientes clave.
+                </p>
+              </div>
+              <div className="w-full max-w-xs">
+                <label className={`mb-1 block text-xs font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Ano</label>
+                <select
+                  value={statusYearFilter}
+                  onChange={(e) => setStatusYearFilter(e.target.value)}
+                  className={`w-full rounded-lg border px-3 py-2 text-sm ${darkMode ? "border-slate-700 bg-slate-900/80 text-slate-100" : "border-slate-300 text-slate-800"}`}
+                >
+                  <option value="TODOS">Todos</option>
+                  {statusYearOptions.map((year) => <option key={year} value={String(year)}>{year}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div className="mt-4 grid gap-3 sm:grid-cols-3">
+              <div className={`rounded-2xl border p-4 ${darkMode ? "border-slate-700 bg-slate-900/60" : "border-slate-200 bg-slate-50"}`}>
+                <p className={`text-xs uppercase tracking-[0.18em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Total de casos</p>
+                <p className={`mt-2 text-3xl font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{statusRowsByYear.length}</p>
+              </div>
+              <div className={`rounded-2xl border p-4 ${darkMode ? "border-slate-700 bg-slate-900/60" : "border-slate-200 bg-slate-50"}`}>
+                <p className={`text-xs uppercase tracking-[0.18em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Estatus distintos</p>
+                <p className={`mt-2 text-3xl font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{filteredStatusAnalysis.estatus_top.length}</p>
+              </div>
+              <div className={`rounded-2xl border p-4 ${darkMode ? "border-slate-700 bg-slate-900/60" : "border-slate-200 bg-slate-50"}`}>
+                <p className={`text-xs uppercase tracking-[0.18em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Estados distintos</p>
+                <p className={`mt-2 text-3xl font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{filteredStatusAnalysis.estado_top.length}</p>
+              </div>
+            </div>
+          </section>
+
+          <section className="grid gap-6 lg:grid-cols-3">
+            <MiniBarChart title="Estatus (Top)" data={filteredStatusAnalysis.estatus_top} darkMode={darkMode} />
+            <MiniBarChart title="Estado (Top)" data={filteredStatusAnalysis.estado_top} darkMode={darkMode} />
+            <MiniBarChart title="Pendientes Clave (Totales)" data={filteredStatusAnalysis.pendientes_status_totals} darkMode={darkMode} />
+          </section>
         </section>
       )}
 
