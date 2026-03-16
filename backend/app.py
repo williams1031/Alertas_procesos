@@ -474,17 +474,32 @@ def build_analysis_records(all_alerts: pd.DataFrame) -> list[dict[str, Any]]:
     return out.to_dict(orient="records")
 
 
-def build_general_records(df: pd.DataFrame) -> list[dict[str, Any]]:
+def extract_row_years(row: pd.Series, date_columns: list[str]) -> list[int]:
+    years: set[int] = set()
+    for col_name in date_columns:
+        if col_name not in row.index:
+            continue
+        raw_value = row.get(col_name)
+        if pd.isna(raw_value):
+            continue
+        parsed = pd.to_datetime(raw_value, errors="coerce")
+        if pd.notna(parsed):
+            years.add(int(parsed.year))
+            continue
+        text = str(raw_value).strip()
+        parts = text.replace("/", "-").split("-")
+        year_part = next((part for part in parts if len(part) == 4 and part.startswith("20")), "")
+        if year_part:
+            years.add(int(year_part))
+    return sorted(years)
+
+
+def build_status_records(df: pd.DataFrame) -> list[dict[str, Any]]:
     if df.empty:
         return []
 
     optional_columns = [
-        ("Aviso_T2", "Aviso"),
-        ("Aviso", "Aviso"),
         ("Cuenta Contrato", "Cuenta Contrato"),
-        ("Interlocutor", "Interlocutor"),
-        ("Dirección", "Direccion"),
-        ("DirecciÃ³n", "Direccion"),
         ("Ciudad", "Ciudad"),
         ("Estatus", "Estatus"),
         ("Estado", "Estado"),
@@ -493,12 +508,7 @@ def build_general_records(df: pd.DataFrame) -> list[dict[str, Any]]:
         ("Liquidación", "Liquidacion"),
         ("LiquidaciÃ³n", "Liquidacion"),
         ("Fecha de Vencimiento", "Fecha_Vencimiento_Admin"),
-        ("DÍAS", "Dias_Admin"),
-        ("DÃAS", "Dias_Admin"),
         ("Fecha de Vencimiento.1", "Fecha_Vencimiento_Penal"),
-        ("DÍAS.1", "Dias_Penal"),
-        ("DÃAS.1", "Dias_Penal"),
-        ("ANALISIS", "Analisis"),
     ]
 
     selected: dict[str, str] = {}
@@ -511,40 +521,30 @@ def build_general_records(df: pd.DataFrame) -> list[dict[str, Any]]:
         return []
 
     out = df[list(selected.keys())].rename(columns=selected).copy()
-    out.insert(0, "Fila", list(range(1, len(out) + 1)))
+    date_columns = [name for name in ["Fecha_Vencimiento_Admin", "Fecha_Vencimiento_Penal"] if name in out.columns]
+    records: list[dict[str, Any]] = []
 
-    for col_name in out.columns:
-        if "Fecha" in col_name:
-            out[col_name] = pd.to_datetime(out[col_name], errors="coerce").dt.strftime("%Y-%m-%d")
-        else:
-            out[col_name] = out[col_name].where(pd.notna(out[col_name]), "")
-            out[col_name] = out[col_name].astype(str).str.strip()
+    for _, row in out.iterrows():
+        responsable = (
+            str(row.get("Responsable_Administrativo") or "").strip()
+            or str(row.get("Responsable_Penal") or "").strip()
+            or str(row.get("Liquidacion") or "").strip()
+            or "Sin responsable"
+        )
+        years = extract_row_years(row, date_columns) or [None]
+        base_record = {
+            "Cuenta Contrato": str(row.get("Cuenta Contrato") or "").strip(),
+            "Ciudad": str(row.get("Ciudad") or "").strip(),
+            "Estatus": str(row.get("Estatus") or "").strip(),
+            "Estado": str(row.get("Estado") or "").strip(),
+            "Responsable": responsable,
+        }
+        for year in years:
+            record = dict(base_record)
+            record["Anio"] = year
+            records.append(record)
 
-    if "Aviso" not in out.columns:
-        out["Aviso"] = ""
-
-    preferred_order = [
-        "Fila",
-        "Aviso",
-        "Cuenta Contrato",
-        "Interlocutor",
-        "Direccion",
-        "Ciudad",
-        "Estatus",
-        "Estado",
-        "Responsable_Administrativo",
-        "Responsable_Penal",
-        "Liquidacion",
-        "Fecha_Vencimiento_Admin",
-        "Dias_Admin",
-        "Fecha_Vencimiento_Penal",
-        "Dias_Penal",
-        "Analisis",
-    ]
-    ordered = [col_name for col_name in preferred_order if col_name in out.columns]
-    remainder = [col_name for col_name in out.columns if col_name not in ordered]
-    out = out[ordered + remainder]
-    return out.to_dict(orient="records")
+    return records
 
 
 def build_general_board_records(all_alerts: pd.DataFrame) -> list[dict[str, Any]]:
@@ -650,8 +650,8 @@ def process_excel_bytes(file_bytes: bytes, sheet_name: str | None) -> dict[str, 
         "source_total_rows": int(len(df)),
         "source_preview": serialize_for_json(df, limit=20),
         "alerts_total_rows": int(len(all_alerts)),
-        "alerts_preview": serialize_for_json(all_alerts, limit=60),
-        "general_records": build_general_records(df),
+        "alerts_preview": serialize_for_json(all_alerts, limit=30),
+        "status_records": build_status_records(df),
         "general_board_records": build_general_board_records(all_alerts),
         "tableros": boards,
         "status_analysis": build_status_analysis(df),

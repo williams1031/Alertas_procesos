@@ -45,7 +45,14 @@ type PreviewResponse = {
   alerts_total_rows: number;
   source_preview: Record<string, string | number | null>[];
   alerts_preview: Record<string, string | number | null>[];
-  general_records: Record<string, string | number | null>[];
+  status_records: {
+    Anio: number | null;
+    Estatus: string;
+    Estado: string;
+    Responsable: string;
+    Ciudad: string;
+    "Cuenta Contrato": string;
+  }[];
   general_board_records: {
     Tipo: string;
     Responsable: string;
@@ -112,7 +119,7 @@ type ChatMessage = {
 };
 
 type ChatContext = {
-  rows: Array<Record<string, string | number | null>>;
+  rows: Array<Record<string, unknown>>;
   scope: string;
   summary: string;
 };
@@ -451,6 +458,8 @@ export default function HomePage() {
   const [sharepointUrl, setSharepointUrl] = useState("");
   const [sheetName, setSheetName] = useState("Procesos Adminis_Penal");
   const [loading, setLoading] = useState(false);
+  const [loadingProgress, setLoadingProgress] = useState(0);
+  const [loadingStage, setLoadingStage] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<PreviewResponse | null>(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -509,81 +518,43 @@ export default function HomePage() {
   }, [data]);
 
   const analysisRecords = data?.analysis_records ?? [];
-  const generalRecords = data?.general_records ?? [];
+  const statusRecords = data?.status_records ?? [];
   const generalBoardRecords = data?.general_board_records ?? [];
 
   const normalizedGeneralRecords = useMemo(
     () =>
-      generalRecords.map((row) => {
-        const enriched = { ...row } as Record<string, string | number | null> & {
-          _search: string;
-          _estatus: string;
-          _estado: string;
-          _tipo: string;
-          _responsable: string;
-          _responsables: string[];
-          _ciudad: string;
-          _cuenta: string;
-        };
+      statusRecords.map((row) => {
         const values = Object.values(row);
-        enriched._search = values.map((value) => normalizeForSearch(value)).join(" ");
-        enriched._estatus = normalizeForSearch(row.Estatus);
-        enriched._estado = normalizeForSearch(row.Estado);
-        enriched._tipo = normalizeForSearch(
-          row.Dias_Penal && row.Dias_Admin ? "combinado" : row.Dias_Penal ? "penal" : row.Dias_Admin ? "administrativo" : ""
-        );
-        enriched._responsables = [
-          normalizeForSearch(row.Responsable_Administrativo),
-          normalizeForSearch(row.Responsable_Penal),
-          normalizeForSearch(row.Liquidacion)
-        ].filter(Boolean);
-        enriched._responsable = enriched._responsables.join(" | ");
-        enriched._ciudad = normalizeForSearch(row.Ciudad);
-        enriched._cuenta = normalizeForSearch(row["Cuenta Contrato"]);
-        enriched.Responsable =
-          String(row.Responsable_Administrativo ?? "").trim() ||
-          String(row.Responsable_Penal ?? "").trim() ||
-          String(row.Liquidacion ?? "").trim() ||
-          "Sin responsable";
-        enriched.Ciudad = String(row.Ciudad ?? "").trim();
-        enriched.DiasInt = Number(row.Dias_Admin ?? row.Dias_Penal ?? NaN);
-        return enriched;
+        const responsables = [normalizeForSearch(row.Responsable)].filter(Boolean);
+        return {
+          ...row,
+          Responsable: String(row.Responsable ?? "").trim() || "Sin responsable",
+          Ciudad: String(row.Ciudad ?? "").trim(),
+          _search: values.map((value) => normalizeForSearch(value)).join(" "),
+          _estatus: normalizeForSearch(row.Estatus),
+          _estado: normalizeForSearch(row.Estado),
+          _responsables: responsables,
+          _responsable: responsables.join(" | "),
+          _ciudad: normalizeForSearch(row.Ciudad),
+          _cuenta: normalizeForSearch(row["Cuenta Contrato"])
+        };
       }),
-    [generalRecords]
+    [statusRecords]
   );
-
-  const extractYearsFromRow = (row: Record<string, string | number | null>) => {
-    const years = new Set<number>();
-    for (const [key, value] of Object.entries(row)) {
-      if (!key.toLowerCase().includes("fecha")) continue;
-      const text = String(value ?? "").trim();
-      if (!text) continue;
-      const match = text.match(/\b(20\d{2})\b/);
-      if (match) {
-        years.add(Number(match[1]));
-        continue;
-      }
-      const parsed = new Date(text);
-      if (!Number.isNaN(parsed.getTime())) {
-        years.add(parsed.getFullYear());
-      }
-    }
-    return Array.from(years);
-  };
 
   const statusYearOptions = useMemo(() => {
     const years = new Set<number>();
-    for (const row of generalRecords) {
-      for (const year of extractYearsFromRow(row)) years.add(year);
+    for (const row of statusRecords) {
+      if (typeof row.Anio === "number" && Number.isFinite(row.Anio)) years.add(row.Anio);
     }
     return Array.from(years).sort((a, b) => a - b);
-  }, [generalRecords]);
+  }, [statusRecords]);
 
   const statusRowsByYear = useMemo(() => {
-    if (statusYearFilter === "TODOS") return generalRecords;
+    if (statusYearFilter === "TODOS") return statusRecords;
     const targetYear = Number(statusYearFilter);
-    return generalRecords.filter((row) => extractYearsFromRow(row).includes(targetYear));
-  }, [generalRecords, statusYearFilter]);
+    return statusRecords.filter((row) => row.Anio === targetYear);
+  }, [statusRecords, statusYearFilter]);
 
   const buildTopCountsFromRows = (
     rows: Record<string, string | number | null>[],
@@ -638,17 +609,17 @@ export default function HomePage() {
 
   const generalEstatusOptions = useMemo(() => {
     const vals = Array.from(
-      new Set(generalRecords.map((r) => String(r.Estatus ?? "").trim()).filter(Boolean))
+      new Set(statusRecords.map((r) => String(r.Estatus ?? "").trim()).filter(Boolean))
     );
     return vals.sort((a, b) => a.localeCompare(b, "es"));
-  }, [generalRecords]);
+  }, [statusRecords]);
 
   const generalEstadoOptions = useMemo(() => {
     const vals = Array.from(
-      new Set(generalRecords.map((r) => String(r.Estado ?? "").trim()).filter(Boolean))
+      new Set(statusRecords.map((r) => String(r.Estado ?? "").trim()).filter(Boolean))
     );
     return vals.sort((a, b) => a.localeCompare(b, "es"));
-  }, [generalRecords]);
+  }, [statusRecords]);
 
   const generalTipoOptions = useMemo(() => {
     const vals = Array.from(new Set(generalBoardRecords.map((r) => String(r.Tipo ?? "").trim()).filter(Boolean)));
@@ -925,7 +896,7 @@ export default function HomePage() {
     const matchedEstado = knownEstado.find((name) => name && q.includes(name));
 
     let scopedRows = isFollowUp && chatContextRef.current?.rows?.length
-      ? (chatContextRef.current.rows as typeof normalizedAnalysis)
+      ? (chatContextRef.current.rows as unknown as typeof normalizedAnalysis)
       : normalizedAnalysis;
     let sourceScope = isFollowUp && chatContextRef.current?.scope ? chatContextRef.current.scope : "analisis";
 
@@ -966,7 +937,7 @@ export default function HomePage() {
     if (matchedEstado || askedEstadoKeyword) {
       const stateNeedle = matchedEstado || askedEstadoKeyword;
       const rawScoped = isFollowUp && chatContextRef.current?.rows?.length
-        ? (chatContextRef.current.rows as typeof normalizedGeneralRecords)
+        ? (chatContextRef.current.rows as unknown as typeof normalizedGeneralRecords)
         : normalizedGeneralRecords;
       const estadoRows = rawScoped.filter((row) => row._estado.includes(stateNeedle));
       if (estadoRows.length) {
@@ -991,7 +962,7 @@ export default function HomePage() {
 
     if (q.includes("leiste el excel") || q.includes("leer el excel") || q.includes("leiste el archivo") || q.includes("archivo cargado")) {
       return {
-        text: `Si. El analisis actual sale del Excel cargado en la hoja ${data.sheet_used}. Tengo ${data.source_total_rows} registros fuente, ${data.alerts_total_rows} alertas procesadas y ${generalRecords.length} filas disponibles en la vista general.`
+        text: `Si. El analisis actual sale del Excel cargado en la hoja ${data.sheet_used}. Tengo ${data.source_total_rows} registros fuente, ${data.alerts_total_rows} alertas procesadas y ${statusRecords.length} registros livianos para filtros y consultas.`
       };
     }
 
@@ -1143,7 +1114,7 @@ export default function HomePage() {
 
     if (q.includes("estatus") || q.includes("estado")) {
       const baseRows = isFollowUp && chatContextRef.current?.rows?.length
-        ? (chatContextRef.current.rows as typeof normalizedGeneralRecords)
+        ? (chatContextRef.current.rows as unknown as typeof normalizedGeneralRecords)
         : normalizedGeneralRecords;
       const keyword = matchedEstatus || matchedEstado || askedStatusKeyword || askedEstadoKeyword;
       const found = keyword
@@ -1238,6 +1209,60 @@ export default function HomePage() {
     setError(null);
   };
 
+  const requestPreview = (formData: FormData) =>
+    new Promise<PreviewResponse>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      let processingTimer: number | null = null;
+
+      xhr.open("POST", `${API_URL}/api/alerts/preview`);
+      xhr.responseType = "json";
+
+      xhr.upload.onloadstart = () => {
+        setLoadingProgress(8);
+        setLoadingStage("Preparando archivo...");
+      };
+
+      xhr.upload.onprogress = (event) => {
+        if (!event.lengthComputable) return;
+        const uploadPercent = Math.round((event.loaded / event.total) * 68);
+        setLoadingProgress(Math.max(10, Math.min(68, uploadPercent)));
+        setLoadingStage("Subiendo archivo...");
+      };
+
+      xhr.upload.onload = () => {
+        setLoadingStage("Analizando hoja y construyendo tableros...");
+        setLoadingProgress((prev) => Math.max(prev, 70));
+        processingTimer = window.setInterval(() => {
+          setLoadingProgress((prev) => {
+            if (prev >= 94) return prev;
+            return prev < 84 ? prev + 3 : prev + 1;
+          });
+        }, 450);
+      };
+
+      xhr.onerror = () => {
+        if (processingTimer) window.clearInterval(processingTimer);
+        reject(new Error("No se pudo conectar con el servidor."));
+      };
+
+      xhr.onload = () => {
+        if (processingTimer) window.clearInterval(processingTimer);
+        setLoadingProgress(100);
+        setLoadingStage("Finalizando respuesta...");
+        const payload =
+          xhr.response && typeof xhr.response === "object"
+            ? xhr.response
+            : JSON.parse(xhr.responseText || "{}");
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(payload as PreviewResponse);
+          return;
+        }
+        reject(new Error((payload as { detail?: string }).detail ?? "Error procesando."));
+      };
+
+      xhr.send(formData);
+    });
+
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const hasFile = !!file;
@@ -1247,21 +1272,22 @@ export default function HomePage() {
       return;
     }
     setLoading(true);
+    setLoadingProgress(5);
+    setLoadingStage("Iniciando carga...");
     setError(null);
     const formData = new FormData();
     if (file) formData.append("file", file);
     if (hasSharepoint) formData.append("sharepoint_url", sharepointUrl.trim());
     formData.append("sheet_name", sheetName);
     try {
-      const response = await fetch(`${API_URL}/api/alerts/preview`, { method: "POST", body: formData });
-      const payload = (await response.json()) as PreviewResponse | { detail?: string };
-      if (!response.ok) throw new Error((payload as { detail?: string }).detail ?? "Error procesando.");
-      const parsed = payload as PreviewResponse;
+      const parsed = await requestPreview(formData);
       setData(parsed);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo procesar.");
     } finally {
       setLoading(false);
+      setLoadingProgress(0);
+      setLoadingStage("");
     }
   };
 
@@ -1348,6 +1374,29 @@ export default function HomePage() {
               {loading ? "Procesando..." : "Leer y construir tableros"}
             </button>
           </div>
+          {loading && (
+            <div className="sm:col-span-12">
+              <div className={`overflow-hidden rounded-2xl border p-4 ${darkMode ? "border-slate-700 bg-slate-900/60" : "border-slate-200 bg-slate-50"}`}>
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className={`text-sm font-semibold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{loadingStage || "Procesando archivo..."}</p>
+                    <p className={`mt-1 text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                      En archivos grandes puede tardar algunos segundos. El proceso sigue activo aunque el backend este analizando.
+                    </p>
+                  </div>
+                  <p className={`text-sm font-semibold tabular-nums ${darkMode ? "text-brand-200" : "text-brand-700"}`}>
+                    {loadingProgress}%
+                  </p>
+                </div>
+                <div className={`mt-3 h-3 overflow-hidden rounded-full ${darkMode ? "bg-slate-800" : "bg-slate-200"}`}>
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-brand-500 via-cyan-400 to-emerald-400 transition-[width] duration-300 ease-out"
+                    style={{ width: `${Math.max(6, loadingProgress)}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
         </form>
 
         {diagnosticError && <p className={`mt-4 rounded-lg border px-3 py-2 text-sm ${darkMode ? "border-red-900/50 bg-red-950/40 text-red-300" : "border-red-200 bg-red-50 text-red-700"}`}>{diagnosticError}</p>}
@@ -1658,7 +1707,7 @@ export default function HomePage() {
       {data && (
         <section className="mt-8 grid gap-6 lg:grid-cols-2">
           <DataTable title="Vista previa fuente (20)" rows={data.source_preview} darkMode={darkMode} />
-          <DataTable title="Vista previa alertas (60)" rows={data.alerts_preview} darkMode={darkMode} />
+          <DataTable title="Vista previa alertas (30)" rows={data.alerts_preview} darkMode={darkMode} />
         </section>
       )}
 
