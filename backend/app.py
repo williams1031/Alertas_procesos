@@ -336,6 +336,108 @@ def build_day_board(alertas: pd.DataFrame, key: str, title: str, description: st
     }
 
 
+def build_pending_control_records(
+    df: pd.DataFrame,
+    responsable_column: str,
+    fecha_column: str,
+    dias_column: str,
+) -> list[dict[str, Any]]:
+    if df.empty:
+        return []
+
+    responsable_col = col(df, responsable_column)
+    fecha_col = col(df, fecha_column)
+    dias_col = col(df, dias_column)
+    estatus_col = col(df, "Estatus")
+    estado_col = col(df, "Estado")
+
+    work = pd.DataFrame(
+        {
+            "Responsable": df[responsable_col],
+            "Fecha_Vencimiento": df[fecha_col],
+            "Dias": pd.to_numeric(df[dias_col], errors="coerce"),
+            "Estatus": df[estatus_col],
+            "Estado": df[estado_col],
+        }
+    )
+    estatus_norm = work["Estatus"].fillna("").astype(str).apply(normalize_text)
+    pending_mask = estatus_norm.str.contains("para expediente", na=False) | estatus_norm.str.contains("para administrativo", na=False)
+    work = work[pending_mask].copy()
+    work = work[work["Dias"].notna()].copy()
+    if work.empty:
+        return []
+
+    work["Responsable"] = work["Responsable"].fillna("").astype(str).str.strip()
+    work.loc[work["Responsable"].str.lower().isin({"", "nan", "none", "n/a", "na"}), "Responsable"] = "Pendiente por asignar"
+    work["Estatus"] = work["Estatus"].fillna("").astype(str).str.strip()
+    work["Estado"] = work["Estado"].fillna("").astype(str).str.strip()
+    work["DiasInt"] = work["Dias"].astype(int)
+    work["Fecha_Vencimiento"] = pd.to_datetime(work["Fecha_Vencimiento"], errors="coerce").dt.strftime("%Y-%m-%d")
+    work["Fecha_Vencimiento"] = work["Fecha_Vencimiento"].fillna("")
+    work = explode_by_responsable(work, "Responsable")
+    work = work.sort_values(by=["Responsable", "DiasInt", "Fecha_Vencimiento"], ascending=[True, True, True])
+
+    return work[["Responsable", "Fecha_Vencimiento", "DiasInt", "Estatus", "Estado"]].to_dict(orient="records")
+
+
+def build_admin_control_records(df: pd.DataFrame) -> list[dict[str, Any]]:
+    return build_pending_control_records(
+        df,
+        responsable_column="Responsable Administrativo",
+        fecha_column="Fecha de Vencimiento",
+        dias_column="D\u00cdAS",
+    )
+
+
+def build_penal_control_records(df: pd.DataFrame) -> list[dict[str, Any]]:
+    return build_pending_control_records(
+        df,
+        responsable_column="Responsable Penal",
+        fecha_column="Fecha de Vencimiento.1",
+        dias_column="D\u00cdAS.1",
+    )
+
+
+def build_procedencia_control_records(df: pd.DataFrame) -> list[dict[str, Any]]:
+    if df.empty:
+        return []
+
+    responsable_col = col(df, "Liquidación")
+    fecha_col = col(df, "Fecha de Vencimiento")
+    dias_col = col(df, "D\u00cdAS")
+    estatus_col = col(df, "Estatus")
+    estado_col = col(df, "Estado")
+
+    work = pd.DataFrame(
+        {
+            "Responsable": df[responsable_col],
+            "Fecha_Vencimiento": df[fecha_col],
+            "Dias": pd.to_numeric(df[dias_col], errors="coerce"),
+            "Estatus": df[estatus_col],
+            "Estado": df[estado_col],
+        }
+    )
+    estatus_norm = work["Estatus"].fillna("").astype(str).apply(normalize_text)
+    pending_mask = estatus_norm.str.contains("pendiente determinar procedencia", na=False)
+    work = work[pending_mask].copy()
+    work = work[work["Dias"].notna()].copy()
+    work = work[work["Dias"] <= 45].copy()
+    if work.empty:
+        return []
+
+    work["Responsable"] = work["Responsable"].fillna("").astype(str).str.strip()
+    work.loc[work["Responsable"].str.lower().isin({"", "nan", "none", "n/a", "na"}), "Responsable"] = "Pendiente por asignar"
+    work["Estatus"] = work["Estatus"].fillna("").astype(str).str.strip()
+    work["Estado"] = work["Estado"].fillna("").astype(str).str.strip()
+    work["DiasInt"] = work["Dias"].astype(int)
+    work["Fecha_Vencimiento"] = pd.to_datetime(work["Fecha_Vencimiento"], errors="coerce").dt.strftime("%Y-%m-%d")
+    work["Fecha_Vencimiento"] = work["Fecha_Vencimiento"].fillna("")
+    work = explode_by_responsable(work, "Responsable")
+    work = work.sort_values(by=["Responsable", "DiasInt", "Fecha_Vencimiento"], ascending=[True, True, True])
+
+    return work[["Responsable", "Fecha_Vencimiento", "DiasInt", "Estatus", "Estado"]].to_dict(orient="records")
+
+
 def build_status_analysis(df: pd.DataFrame) -> dict[str, Any]:
     def top_counts(column_name: str, top_n: int = 10) -> list[dict[str, Any]]:
         c = col(df, column_name)
@@ -611,6 +713,9 @@ def process_excel_bytes(file_bytes: bytes, sheet_name: str | None) -> dict[str, 
         "source_columns": [str(c) for c in df.columns],
         "source_total_rows": int(len(df)),
         "source_preview": serialize_for_json(df, limit=20),
+        "admin_control_records": build_admin_control_records(df),
+        "penal_control_records": build_penal_control_records(df),
+        "procedencia_control_records": build_procedencia_control_records(df),
     }
 
 
