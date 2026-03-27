@@ -605,59 +605,14 @@ def process_excel_bytes(file_bytes: bytes, sheet_name: str | None) -> dict[str, 
     df = pd.read_excel(BytesIO(file_bytes), sheet_name=target_sheet, engine="openpyxl")
     df.columns = [str(c).strip() for c in df.columns]
 
-    all_alerts, proc_df, pending_status_df = build_alerts_dataframe(df)
-
-    admin_5m = all_alerts[all_alerts["Tipo"] == "Administrativo"].copy()
-    penal_5m = all_alerts[all_alerts["Tipo"] == "Penal"].copy()
-    combinado_5m = pd.concat([admin_5m, penal_5m], ignore_index=True)
-
-    boards = [
-        build_day_board(
-            proc_df,
-            key="pendientes_procedencia",
-            title="Tablero de Pendiente determinar procedencia (45 dias)",
-            description="Estatus 'Pendiente determinar procedencia'. Responsable tomado de columna Liquidación.",
-        ),
-        build_day_board(
-            penal_5m,
-            key="penales_5m",
-            title="Tablero de Penales 5 Meses",
-            description="Alertas penales con vencimiento en 5 meses o menos.",
-        ),
-        build_day_board(
-            admin_5m,
-            key="administrativos_5m",
-            title="Tablero de Administrativos 5 Meses",
-            description="Alertas administrativas con vencimiento en 5 meses o menos.",
-        ),
-        build_day_board(
-            combinado_5m,
-            key="combinado_5m",
-            title="Penal Administrativo Combinado 5 Meses",
-            description="Vista consolidada penal + administrativo a 5 meses.",
-        ),
-    ]
-
     return {
-        "policy": {
-            "five_month_days": FIVE_MONTH_DAYS,
-            "pending_liquidacion_alert_day": 30,
-            "vencimiento_alert_day": 10,
-        },
         "sheet_used": target_sheet,
         "available_sheets": available_sheets,
         "source_columns": [str(c) for c in df.columns],
         "source_total_rows": int(len(df)),
         "source_preview": serialize_for_json(df, limit=20),
-        "alerts_total_rows": int(len(all_alerts)),
-        "alerts_preview": serialize_for_json(all_alerts, limit=30),
-        "status_records": build_status_records(df),
-        "general_board_records": build_general_board_records(all_alerts),
-        "tableros": boards,
-        "status_analysis": build_status_analysis(df),
-        "control_dashboard": build_control_dashboard(pending_status_df),
-        "analysis_records": build_analysis_records(pending_status_df),
     }
+
 
 
 def get_graph_access_token() -> str:
