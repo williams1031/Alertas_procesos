@@ -4,6 +4,7 @@ import base64
 import os
 import time
 import unicodedata
+from datetime import date
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -11,8 +12,9 @@ from urllib.parse import urlparse
 
 import httpx
 import pandas as pd
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
 
 FIVE_MONTH_DAYS = 150
@@ -75,6 +77,25 @@ def map_columns(df: pd.DataFrame, required: list[tuple[str, str]]) -> dict[str, 
 def series_empty(series: pd.Series) -> pd.Series:
     s = series.astype(str).str.strip().str.lower()
     return series.isna() | s.isin({"", "nan", "none", "null", "sin dato", "-"})
+
+
+def is_unassigned_value(value: Any) -> bool:
+    normalized = normalize_text(value)
+    return normalized in {
+        "",
+        "nan",
+        "none",
+        "null",
+        "-",
+        "sin dato",
+        "n/a",
+        "na",
+        "n / a",
+        "#n/a",
+        "#n / a",
+        "s/a",
+        "s / a",
+    }
 
 
 def split_responsables(value: Any) -> list[str]:
@@ -350,6 +371,10 @@ def build_pending_control_records(
     dias_col = col(df, dias_column)
     estatus_col = col(df, "Estatus")
     estado_col = col(df, "Estado")
+    aviso_col = find_column([str(c) for c in df.columns], "Aviso_T2")
+    fecha_aviso_col = find_column([str(c) for c in df.columns], "Fecha_Aviso")
+    cuenta_col = find_column([str(c) for c in df.columns], "Cuenta Contrato")
+    anomalia_col = find_column([str(c) for c in df.columns], "Anomalia_Visita")
 
     work = pd.DataFrame(
         {
@@ -358,6 +383,10 @@ def build_pending_control_records(
             "Dias": pd.to_numeric(df[dias_col], errors="coerce"),
             "Estatus": df[estatus_col],
             "Estado": df[estado_col],
+            "Aviso_T2": df[aviso_col] if aviso_col else "",
+            "Fecha_Aviso": df[fecha_aviso_col] if fecha_aviso_col else "",
+            "Cuenta Contrato": df[cuenta_col] if cuenta_col else "",
+            "Anomalia_Visitada": df[anomalia_col] if anomalia_col else "",
         }
     )
     estatus_norm = work["Estatus"].fillna("").astype(str).apply(normalize_text)
@@ -368,16 +397,20 @@ def build_pending_control_records(
         return []
 
     work["Responsable"] = work["Responsable"].fillna("").astype(str).str.strip()
-    work.loc[work["Responsable"].str.lower().isin({"", "nan", "none", "n/a", "na"}), "Responsable"] = "Pendiente por asignar"
+    work.loc[work["Responsable"].apply(is_unassigned_value), "Responsable"] = "Pendiente por asignar"
     work["Estatus"] = work["Estatus"].fillna("").astype(str).str.strip()
     work["Estado"] = work["Estado"].fillna("").astype(str).str.strip()
     work["DiasInt"] = work["Dias"].astype(int)
     work["Fecha_Vencimiento"] = pd.to_datetime(work["Fecha_Vencimiento"], errors="coerce").dt.strftime("%Y-%m-%d")
     work["Fecha_Vencimiento"] = work["Fecha_Vencimiento"].fillna("")
+    work["Fecha_Aviso"] = pd.to_datetime(work["Fecha_Aviso"], errors="coerce").dt.strftime("%Y-%m-%d").fillna("")
+    work["Aviso_T2"] = work["Aviso_T2"].fillna("").astype(str).str.strip()
+    work["Cuenta Contrato"] = work["Cuenta Contrato"].fillna("").astype(str).str.strip()
+    work["Anomalia_Visitada"] = work["Anomalia_Visitada"].fillna("").astype(str).str.strip()
     work = explode_by_responsable(work, "Responsable")
     work = work.sort_values(by=["Responsable", "DiasInt", "Fecha_Vencimiento"], ascending=[True, True, True])
 
-    return work[["Responsable", "Fecha_Vencimiento", "DiasInt", "Estatus", "Estado"]].to_dict(orient="records")
+    return work[["Responsable", "Fecha_Vencimiento", "DiasInt", "Estatus", "Estado", "Aviso_T2", "Fecha_Aviso", "Cuenta Contrato", "Anomalia_Visitada"]].to_dict(orient="records")
 
 
 def build_admin_control_records(df: pd.DataFrame) -> list[dict[str, Any]]:
@@ -398,44 +431,57 @@ def build_penal_control_records(df: pd.DataFrame) -> list[dict[str, Any]]:
     )
 
 
-def build_procedencia_control_records(df: pd.DataFrame) -> list[dict[str, Any]]:
+def build_no_procedente_control_records(df: pd.DataFrame) -> list[dict[str, Any]]:
     if df.empty:
         return []
 
-    responsable_col = col(df, "Liquidación")
+    responsable_col = (
+        find_column([str(c) for c in df.columns], "Liquidación")
+        or find_column([str(c) for c in df.columns], "LiquidaciÃ³n")
+        or find_column([str(c) for c in df.columns], "Liquidaci?n")
+    )
+    if responsable_col is None:
+        raise ValueError("No se encontro la columna requerida: Liquidación")
     fecha_col = col(df, "Fecha de Vencimiento")
-    dias_col = col(df, "D\u00cdAS")
     estatus_col = col(df, "Estatus")
     estado_col = col(df, "Estado")
+    aviso_col = find_column([str(c) for c in df.columns], "Aviso_T2")
+    fecha_aviso_col = find_column([str(c) for c in df.columns], "Fecha_Aviso")
+    cuenta_col = find_column([str(c) for c in df.columns], "Cuenta Contrato")
+    anomalia_col = find_column([str(c) for c in df.columns], "Anomalia_Visita")
 
     work = pd.DataFrame(
         {
             "Responsable": df[responsable_col],
-            "Fecha_Vencimiento": df[fecha_col],
-            "Dias": pd.to_numeric(df[dias_col], errors="coerce"),
+            "Fecha_Vencimiento": pd.to_datetime(df[fecha_col], errors="coerce"),
             "Estatus": df[estatus_col],
             "Estado": df[estado_col],
+            "Aviso_T2": df[aviso_col] if aviso_col else "",
+            "Fecha_Aviso": df[fecha_aviso_col] if fecha_aviso_col else "",
+            "Cuenta Contrato": df[cuenta_col] if cuenta_col else "",
+            "Anomalia_Visitada": df[anomalia_col] if anomalia_col else "",
         }
     )
     estatus_norm = work["Estatus"].fillna("").astype(str).apply(normalize_text)
-    pending_mask = estatus_norm.str.contains("pendiente determinar procedencia", na=False)
-    work = work[pending_mask].copy()
-    work = work[work["Dias"].notna()].copy()
-    work = work[work["Dias"] <= 45].copy()
+    work = work[estatus_norm == "pendiente determinar procedencia"].copy()
+    work = work[work["Fecha_Vencimiento"].notna()].copy()
     if work.empty:
         return []
 
+    today = pd.Timestamp(date.today())
+    work["DiasInt"] = (work["Fecha_Vencimiento"] - today).dt.days.astype(int)
     work["Responsable"] = work["Responsable"].fillna("").astype(str).str.strip()
-    work.loc[work["Responsable"].str.lower().isin({"", "nan", "none", "n/a", "na"}), "Responsable"] = "Pendiente por asignar"
+    work.loc[work["Responsable"].apply(is_unassigned_value), "Responsable"] = "Pendiente por asignar"
     work["Estatus"] = work["Estatus"].fillna("").astype(str).str.strip()
     work["Estado"] = work["Estado"].fillna("").astype(str).str.strip()
-    work["DiasInt"] = work["Dias"].astype(int)
-    work["Fecha_Vencimiento"] = pd.to_datetime(work["Fecha_Vencimiento"], errors="coerce").dt.strftime("%Y-%m-%d")
-    work["Fecha_Vencimiento"] = work["Fecha_Vencimiento"].fillna("")
-    work = explode_by_responsable(work, "Responsable")
+    work["Fecha_Vencimiento"] = work["Fecha_Vencimiento"].dt.strftime("%Y-%m-%d").fillna("")
+    work["Fecha_Aviso"] = pd.to_datetime(work["Fecha_Aviso"], errors="coerce").dt.strftime("%Y-%m-%d").fillna("")
+    work["Aviso_T2"] = work["Aviso_T2"].fillna("").astype(str).str.strip()
+    work["Cuenta Contrato"] = work["Cuenta Contrato"].fillna("").astype(str).str.strip()
+    work["Anomalia_Visitada"] = work["Anomalia_Visitada"].fillna("").astype(str).str.strip()
     work = work.sort_values(by=["Responsable", "DiasInt", "Fecha_Vencimiento"], ascending=[True, True, True])
 
-    return work[["Responsable", "Fecha_Vencimiento", "DiasInt", "Estatus", "Estado"]].to_dict(orient="records")
+    return work[["Responsable", "Fecha_Vencimiento", "DiasInt", "Estatus", "Estado", "Aviso_T2", "Fecha_Aviso", "Cuenta Contrato", "Anomalia_Visitada"]].to_dict(orient="records")
 
 
 def build_status_analysis(df: pd.DataFrame) -> dict[str, Any]:
@@ -690,14 +736,253 @@ def serialize_for_json(df: pd.DataFrame, limit: int = 30) -> list[dict[str, Any]
     return sample.to_dict(orient="records")
 
 
-def process_excel_bytes(file_bytes: bytes, sheet_name: str | None) -> dict[str, Any]:
+def extract_filter_options(df: pd.DataFrame, column_name: str) -> list[str]:
+    source_col = col(df, column_name)
+    values = (
+        df[source_col]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+    )
+    values = values[~values.str.lower().isin({"", "nan", "none", "null", "-"})]
+    return sorted(values.drop_duplicates().tolist(), key=lambda item: item.lower())
+
+
+def build_chart_records(df: pd.DataFrame) -> list[dict[str, str]]:
+    estatus_col = col(df, "Estatus")
+    estado_col = col(df, "Estado")
+    observaciones_col = col(df, "Observaciones")
+    work = pd.DataFrame(
+        {
+            "Estatus": df[estatus_col].fillna("").astype(str).str.strip(),
+            "Estado": df[estado_col].fillna("").astype(str).str.strip(),
+            "Observaciones": df[observaciones_col].fillna("").astype(str).str.strip(),
+        }
+    )
+    return work.to_dict(orient="records")
+
+
+def build_medidores_overview(df: pd.DataFrame) -> dict[str, Any]:
+    concepto_col = col(df, "Concepto")
+    retirado_por_col = (
+        find_column([str(c) for c in df.columns], "Retirado por")
+        or find_column([str(c) for c in df.columns], "Retirado_por")
+        or find_column([str(c) for c in df.columns], "Retiro")
+    )
+    cuenta_col = col(df, "Cuenta Contrato")
+    medidor_col = col(df, "Medidor")
+    diametro_col = find_column([str(c) for c in df.columns], "Diametro") or find_column(
+        [str(c) for c in df.columns], "Diámetro"
+    )
+    lectura_col = find_column([str(c) for c in df.columns], "Lectura")
+    retiro_col = find_column([str(c) for c in df.columns], "Retiro")
+    liquidacion_m3_col = find_column([str(c) for c in df.columns], "Liquidación en m3") or find_column(
+        [str(c) for c in df.columns], "Liquidacion en m3"
+    )
+
+    def parse_liquidacion_m3(value: Any) -> float | None:
+        text = str(value or "").strip()
+        if not text or normalize_text(text) in {"nan", "none", "null", "-", "sin dato"}:
+            return None
+        text = text.replace("m3", "").replace("M3", "").replace(" ", "")
+        if "," in text and "." in text:
+            if text.rfind(",") > text.rfind("."):
+                text = text.replace(".", "").replace(",", ".")
+            else:
+                text = text.replace(",", "")
+        elif "," in text:
+            text = text.replace(",", ".")
+        try:
+            return float(text)
+        except ValueError:
+            return None
+
+    work = pd.DataFrame(
+        {
+            "Concepto": df[concepto_col].fillna("").astype(str).str.strip(),
+            "Retirado_por": df[retirado_por_col].fillna("").astype(str).str.strip() if retirado_por_col else "",
+            "Cuenta_Contrato": df[cuenta_col].fillna("").astype(str).str.strip(),
+            "Medidor": df[medidor_col].fillna("").astype(str).str.strip(),
+            "Diametro": df[diametro_col].fillna("").astype(str).str.strip() if diametro_col else "",
+            "Lectura": df[lectura_col].fillna("").astype(str).str.strip() if lectura_col else "",
+            "Retiro": df[retirado_por_col].fillna("").astype(str).str.strip() if retirado_por_col else "",
+            "Retiro_detalle": df[retiro_col].fillna("").astype(str).str.strip() if retiro_col else "",
+            "Liquidacion_raw": df[liquidacion_m3_col].fillna("").astype(str).str.strip() if liquidacion_m3_col else "",
+            "Liquidacion_m3": df[liquidacion_m3_col].apply(parse_liquidacion_m3) if liquidacion_m3_col else None,
+        }
+    )
+
+    concept_work = work[
+        (work["Concepto"] != "")
+        & ~work["Concepto"].str.lower().isin({"nan", "none", "null"})
+    ].copy()
+    retiro_work = work[
+        (work["Retirado_por"] != "")
+        & ~work["Retirado_por"].str.lower().isin({"nan", "none", "null", "n/a", "na"})
+    ].copy()
+    pendientes_work = concept_work[
+        (concept_work["Cuenta_Contrato"] != "")
+        & ~concept_work["Cuenta_Contrato"].str.lower().isin({"nan", "none", "null"})
+    ].copy()
+
+    total = int(len(concept_work))
+    if total == 0:
+        return {
+            "medidores_total": 0,
+            "medidores_retirado_por": [],
+            "medidores_concepto": [],
+            "medidores_pendientes": [],
+            "medidores_liquidacion_m3": [],
+            "medidores_pendientes_liquidar": 0,
+        }
+
+    counts = (
+        retiro_work.groupby("Retirado_por", dropna=False)
+        .size()
+        .sort_values(ascending=False)
+        .reset_index(name="count")
+    )
+    retiro_total = max(int(len(retiro_work)), 1)
+    counts["percentage"] = counts["count"].apply(lambda value: round((float(value) / retiro_total) * 100, 2))
+
+    concept_counts = (
+        concept_work.groupby("Concepto", dropna=False)
+        .size()
+        .sort_values(ascending=False)
+        .reset_index(name="count")
+    )
+    concept_counts["percentage"] = concept_counts["count"].apply(lambda value: round((float(value) / total) * 100, 2))
+
+    pendientes = pendientes_work[pendientes_work["Concepto"].apply(normalize_text) == "pendiente"].copy()
+    pendientes = pendientes.rename(columns={"Cuenta_Contrato": "Cuenta Contrato"})
+    pendientes = pendientes[["Cuenta Contrato", "Medidor", "Diametro", "Lectura", "Retiro", "Concepto"]].sort_values(
+        by=["Cuenta Contrato", "Medidor"], ascending=[True, True]
+    )
+
+    liquidacion_numeric = (
+        concept_work[concept_work["Liquidacion_m3"].notna()]
+        .groupby("Concepto", dropna=False)["Liquidacion_m3"]
+        .agg(["count", "sum"])
+        .reset_index()
+    )
+    liquidacion_pending = (
+        concept_work[concept_work["Liquidacion_raw"].apply(normalize_text) == "pendiente"]
+        .groupby("Concepto", dropna=False)
+        .size()
+        .reset_index(name="pending_count")
+    )
+    liquidacion_summary = liquidacion_numeric.merge(
+        liquidacion_pending,
+        on="Concepto",
+        how="outer",
+    ).fillna({"count": 0, "sum": 0, "pending_count": 0})
+    liquidacion_summary["count"] = liquidacion_summary["count"].astype(int)
+    liquidacion_summary["pending_count"] = liquidacion_summary["pending_count"].astype(int)
+    liquidacion_summary["sum"] = liquidacion_summary["sum"].astype(float).round(2)
+    liquidacion_summary = liquidacion_summary.sort_values(
+        by=["sum", "pending_count", "Concepto"], ascending=[False, False, True]
+    )
+    pendientes_liquidar = int((concept_work["Liquidacion_raw"].apply(normalize_text) == "pendiente").sum())
+
+    return {
+        "medidores_total": total,
+        "medidores_retirado_por": counts.rename(columns={"Retirado_por": "label"}).to_dict(orient="records"),
+        "medidores_concepto": concept_counts.rename(columns={"Concepto": "label"}).to_dict(orient="records"),
+        "medidores_pendientes": pendientes.to_dict(orient="records"),
+        "medidores_liquidacion_m3": liquidacion_summary.rename(columns={"Concepto": "label"}).to_dict(orient="records"),
+        "medidores_pendientes_liquidar": pendientes_liquidar,
+    }
+
+
+def build_administrativa_payload(df: pd.DataFrame, target_sheet: str, available_sheets: list[str]) -> dict[str, Any]:
+    return {
+        "sheet_used": target_sheet,
+        "available_sheets": available_sheets,
+        "source_columns": [str(c) for c in df.columns],
+        "source_total_rows": len(df.index),
+        "all_estatus_options": extract_filter_options(df, "Estatus"),
+        "all_estado_options": extract_filter_options(df, "Estado"),
+        "chart_records": build_chart_records(df),
+        "report_records": build_report_records(df),
+        "source_preview": serialize_for_json(df, limit=20),
+        "admin_control_records": build_admin_control_records(df),
+        "penal_control_records": build_penal_control_records(df),
+        "no_procedente_control_records": build_no_procedente_control_records(df),
+        "medidores_total": 0,
+        "medidores_retirado_por": [],
+    }
+
+
+def build_medidores_payload(df: pd.DataFrame, target_sheet: str, available_sheets: list[str]) -> dict[str, Any]:
+    overview = build_medidores_overview(df)
+    return {
+        "sheet_used": target_sheet,
+        "available_sheets": available_sheets,
+        "source_columns": [str(c) for c in df.columns],
+        "source_total_rows": len(df.index),
+        "all_estatus_options": [],
+        "all_estado_options": [],
+        "chart_records": [],
+        "report_records": [],
+        "source_preview": serialize_for_json(df, limit=20),
+        "admin_control_records": [],
+        "penal_control_records": [],
+        "no_procedente_control_records": [],
+        "medidores_total": overview["medidores_total"],
+        "medidores_retirado_por": overview["medidores_retirado_por"],
+        "medidores_concepto": overview["medidores_concepto"],
+        "medidores_pendientes": overview["medidores_pendientes"],
+        "medidores_liquidacion_m3": overview["medidores_liquidacion_m3"],
+        "medidores_pendientes_liquidar": overview["medidores_pendientes_liquidar"],
+    }
+
+
+def build_report_records(df: pd.DataFrame) -> list[dict[str, str]]:
+    column_candidates = {
+        "Aviso_T2": ["Aviso_T2"],
+        "Fecha_Aviso": ["Fecha_Aviso"],
+        "Cuenta Contrato": ["Cuenta Contrato", "Cuenta Contrato "],
+        "Anomalia_Visita": ["Anomalia_Visita", "Anomalia_Visita "],
+        "Estatus": ["Estatus"],
+        "Estado": ["Estado"],
+        "Observaciones": ["Observaciones"],
+    }
+
+    resolved: dict[str, str | None] = {}
+    columns = [str(c) for c in df.columns]
+    for output_name, candidates in column_candidates.items():
+        resolved[output_name] = None
+        for candidate in candidates:
+            found = find_column(columns, candidate)
+            if found:
+                resolved[output_name] = found
+                break
+
+    work = pd.DataFrame()
+    for output_name, source_name in resolved.items():
+        if source_name:
+            work[output_name] = df[source_name]
+        else:
+            work[output_name] = ""
+
+    for col_name in work.columns:
+        if pd.api.types.is_datetime64_any_dtype(work[col_name]):
+            work[col_name] = work[col_name].dt.strftime("%Y-%m-%d")
+        else:
+            work[col_name] = work[col_name].fillna("").astype(str).str.strip()
+
+    return work.to_dict(orient="records")
+
+
+def process_excel_bytes(file_bytes: bytes, sheet_name: str | None, base_mode: str | None = None) -> dict[str, Any]:
     excel_file = pd.ExcelFile(BytesIO(file_bytes), engine="openpyxl")
     available_sheets = list(excel_file.sheet_names)
+    normalized_mode = normalize_text(base_mode)
 
     selected_sheet = sheet_name.strip() if sheet_name else DEFAULT_SHEET
     target_sheet = find_column(available_sheets, selected_sheet)
     if target_sheet is None:
-        if not sheet_name:
+        if not sheet_name or normalized_mode == "medidores":
             target_sheet = available_sheets[0]
         else:
             raise ValueError(
@@ -707,16 +992,9 @@ def process_excel_bytes(file_bytes: bytes, sheet_name: str | None) -> dict[str, 
     df = pd.read_excel(BytesIO(file_bytes), sheet_name=target_sheet, engine="openpyxl")
     df.columns = [str(c).strip() for c in df.columns]
 
-    return {
-        "sheet_used": target_sheet,
-        "available_sheets": available_sheets,
-        "source_columns": [str(c) for c in df.columns],
-        "source_total_rows": int(len(df)),
-        "source_preview": serialize_for_json(df, limit=20),
-        "admin_control_records": build_admin_control_records(df),
-        "penal_control_records": build_penal_control_records(df),
-        "procedencia_control_records": build_procedencia_control_records(df),
-    }
+    if normalized_mode == "medidores":
+        return build_medidores_payload(df, target_sheet, available_sheets)
+    return build_administrativa_payload(df, target_sheet, available_sheets)
 
 
 
@@ -823,6 +1101,7 @@ async def preview_alerts(
     file: UploadFile | None = File(default=None),
     sharepoint_url: str | None = Form(default=None),
     sheet_name: str | None = Form(default=None),
+    base_mode: str | None = Form(default=None),
 ) -> dict[str, Any]:
     try:
         payload: bytes | None = None
@@ -836,9 +1115,35 @@ async def preview_alerts(
                 raise ValueError("El archivo esta vacio.")
         else:
             raise ValueError("Debes subir un archivo o pegar un link de SharePoint.")
-        return process_excel_bytes(payload, sheet_name)
+        return process_excel_bytes(payload, sheet_name, base_mode)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Error procesando archivo: {exc}") from exc
+
+
+@app.post("/api/report/download")
+async def download_filtered_report(payload: dict[str, Any] = Body(...)):
+    records = payload.get("records") or []
+    filename = str(payload.get("filename") or "informe_filtrado.xlsx").strip() or "informe_filtrado.xlsx"
+    if not isinstance(records, list):
+        raise HTTPException(status_code=400, detail="El cuerpo debe incluir una lista 'records'.")
+
+    rows: list[dict[str, Any]] = []
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        rows.append({str(key): ("" if value is None else str(value).strip()) for key, value in record.items()})
+
+    output = BytesIO()
+    pd.DataFrame(rows).to_excel(output, index=False, engine="openpyxl")
+    output.seek(0)
+
+    safe_filename = filename if filename.lower().endswith(".xlsx") else f"{filename}.xlsx"
+    headers = {"Content-Disposition": f'attachment; filename="{safe_filename}"'}
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers=headers,
+    )
 
 
 @app.post("/api/sharepoint/diagnostic")

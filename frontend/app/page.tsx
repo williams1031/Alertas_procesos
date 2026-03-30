@@ -1,35 +1,71 @@
 ﻿"use client";
 
-import html2canvas from "html2canvas";
+import { toBlob } from "html-to-image";
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+
+type ControlRecord = {
+  Responsable: string;
+  Fecha_Vencimiento: string;
+  DiasInt: number;
+  Estatus: string;
+  Estado: string;
+  Aviso_T2: string;
+  Fecha_Aviso: string;
+  "Cuenta Contrato": string;
+  Anomalia_Visitada: string;
+};
 
 type PreviewResponse = {
   sheet_used: string;
   available_sheets: string[];
   source_columns: string[];
   source_total_rows: number;
+  all_estatus_options: string[];
+  all_estado_options: string[];
+  report_records: {
+    Aviso_T2: string;
+    Fecha_Aviso: string;
+    "Cuenta Contrato": string;
+    Anomalia_Visita: string;
+    Estatus: string;
+    Estado: string;
+    Observaciones: string;
+  }[];
+  chart_records: {
+    Estatus: string;
+    Estado: string;
+    Observaciones: string;
+  }[];
   source_preview: Record<string, string | number | null>[];
-  admin_control_records: {
-    Responsable: string;
-    Fecha_Vencimiento: string;
-    DiasInt: number;
-    Estatus: string;
-    Estado: string;
+  admin_control_records: ControlRecord[];
+  penal_control_records: ControlRecord[];
+  no_procedente_control_records: ControlRecord[];
+  medidores_total: number;
+  medidores_retirado_por: {
+    label: string;
+    count: number;
+    percentage: number;
   }[];
-  penal_control_records: {
-    Responsable: string;
-    Fecha_Vencimiento: string;
-    DiasInt: number;
-    Estatus: string;
-    Estado: string;
+  medidores_concepto: {
+    label: string;
+    count: number;
+    percentage: number;
   }[];
-  procedencia_control_records: {
-    Responsable: string;
-    Fecha_Vencimiento: string;
-    DiasInt: number;
-    Estatus: string;
-    Estado: string;
+  medidores_pendientes: {
+    "Cuenta Contrato": string;
+    Medidor: string;
+    Diametro: string;
+    Lectura: string;
+    Retiro: string;
+    Concepto: string;
   }[];
+  medidores_liquidacion_m3: {
+    label: string;
+    count: number;
+    sum: number;
+    pending_count: number;
+  }[];
+  medidores_pendientes_liquidar: number;
 };
 
 type SharepointDiagnosticResponse = {
@@ -56,7 +92,10 @@ type BoardData = {
   description: string;
   row_label: string;
   accent: "teal" | "amber" | "rose";
-  day_columns: number[];
+  column_type: "days" | "dates";
+  warning_after: number | null;
+  overdue_after: number | null;
+  day_columns: Array<number | string>;
   rows: BoardRow[];
   totals: {
     vencidos: number;
@@ -78,7 +117,22 @@ type ChartPoint = {
   count: number;
 };
 
+type BaseMode = "administrativa" | "medidores";
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const DEFAULT_ADMIN_ESTATUS = [
+  "Para administrativo",
+  "Para administrativo/Para expediente",
+  "Para administrativo/Penal"
+];
+const DEFAULT_PENAL_ESTATUS = [
+  "Para administrativo/Para expediente",
+  "Para expediente"
+];
+const DEFAULT_SHEET_BY_MODE: Record<BaseMode, string> = {
+  administrativa: "Procesos Adminis_Penal",
+  medidores: "Acueducto"
+};
 
 function normalizeForSearch(value: string | number | null | undefined) {
   return String(value ?? "")
@@ -102,7 +156,9 @@ function buildBoardFromRecords(
   title: string,
   description: string,
   rowLabel = "Responsable",
-  accent: BoardData["accent"] = "teal"
+  accent: BoardData["accent"] = "teal",
+  warningAfter: number | null = null,
+  overdueAfter: number | null = null
 ): BoardData {
   if (!records.length) {
     return {
@@ -110,13 +166,21 @@ function buildBoardFromRecords(
       description,
       row_label: rowLabel,
       accent,
+      column_type: "days",
+      warning_after: warningAfter,
+      overdue_after: overdueAfter,
       day_columns: [],
       rows: [],
       totals: { vencidos: 0, total_general: 0, counts: {} }
     };
   }
 
-  const dayColumns = compactDayColumns(records.map((row) => Number(row.DiasInt)));
+  const visibleDayValues = records
+    .map((row) => Number(row.DiasInt))
+    .filter((day) => Number.isFinite(day))
+    .filter((day) => day >= 0)
+    .filter((day) => overdueAfter === null || day <= overdueAfter);
+  const dayColumns = compactDayColumns(visibleDayValues);
   const grouped = new Map<string, { Responsable: string; DiasInt: number }[]>();
   for (const row of records) {
     const key = row.Responsable || "Sin responsable";
@@ -126,8 +190,10 @@ function buildBoardFromRecords(
   }
 
   const responsibles = Array.from(grouped.keys()).sort((a, b) => {
-    if (a === "Sin responsable") return -1;
-    if (b === "Sin responsable") return 1;
+    if (a === "Pendiente por asignar") return 1;
+    if (b === "Pendiente por asignar") return -1;
+    if (a === "Sin responsable") return 1;
+    if (b === "Sin responsable") return -1;
     return a.localeCompare(b, "es");
   });
 
@@ -142,7 +208,8 @@ function buildBoardFromRecords(
     for (const day of dayColumns) counts[String(day)] = 0;
     let vencidos = 0;
     for (const entry of entries) {
-      if (entry.DiasInt < 0) {
+      const isOverdueByThreshold = overdueAfter !== null && entry.DiasInt > overdueAfter;
+      if (entry.DiasInt < 0 || isOverdueByThreshold) {
         vencidos += 1;
       } else if (dayColumns.includes(entry.DiasInt)) {
         counts[String(entry.DiasInt)] += 1;
@@ -164,6 +231,9 @@ function buildBoardFromRecords(
     description,
     row_label: rowLabel,
     accent,
+    column_type: "days",
+    warning_after: warningAfter,
+    overdue_after: overdueAfter,
     day_columns: dayColumns,
     rows,
     totals: {
@@ -216,7 +286,17 @@ function DataTable({ title, rows, darkMode }: { title: string; rows: Record<stri
   );
 }
 
-function BoardTable({ board, darkMode }: { board: BoardData; darkMode: boolean }) {
+function BoardTable({
+  board,
+  darkMode,
+  onDownloadSummary,
+  downloadingSummary = false
+}: {
+  board: BoardData;
+  darkMode: boolean;
+  onDownloadSummary?: () => void;
+  downloadingSummary?: boolean;
+}) {
   const [showHelp, setShowHelp] = useState(false);
   const [captureMessage, setCaptureMessage] = useState<string | null>(null);
   const [capturing, setCapturing] = useState(false);
@@ -277,12 +357,19 @@ function BoardTable({ board, darkMode }: { board: BoardData; darkMode: boolean }
 
   const captureBoard = async (): Promise<Blob> => {
     if (!boardRef.current) throw new Error("No se encontr? el tablero.");
-    const canvas = await html2canvas(boardRef.current, {
-      scale: 2,
-      useCORS: true,
-      backgroundColor: darkMode ? "#0f172a" : "#ffffff"
+    const blob = await toBlob(boardRef.current, {
+      cacheBust: true,
+      pixelRatio: 2,
+      backgroundColor: darkMode ? "#0f172a" : "#ffffff",
+      filter: (node) => {
+        if (!(node instanceof HTMLElement)) return true;
+        if (node.dataset.html2canvasIgnore === "true") return false;
+        return true;
+      },
+      style: {
+        backdropFilter: "none"
+      }
     });
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
     if (!blob) throw new Error("No fue posible generar la imagen.");
     return blob;
   };
@@ -337,6 +424,11 @@ function BoardTable({ board, darkMode }: { board: BoardData; darkMode: boolean }
           <p className={`mt-2 max-w-3xl text-sm leading-6 ${darkMode ? "text-slate-400" : "text-slate-600"}`}>{board.description}</p>
         </div>
         <div className="flex items-center gap-2">
+          {onDownloadSummary && (
+            <button type="button" onClick={onDownloadSummary} disabled={downloadingSummary} className={`rounded-full border px-3.5 py-1.5 text-xs font-semibold transition disabled:opacity-60 ${accentStyles.actionCopy}`}>
+              {downloadingSummary ? "Generando..." : "Descargar resumen"}
+            </button>
+          )}
           <button type="button" onClick={onCopyBoard} disabled={capturing} className={`rounded-full border px-3.5 py-1.5 text-xs font-semibold transition disabled:opacity-60 ${accentStyles.actionCopy}`}>
             Copiar
           </button>
@@ -362,11 +454,27 @@ function BoardTable({ board, darkMode }: { board: BoardData; darkMode: boolean }
               <th className={`sticky left-0 z-20 px-3 py-3 text-left font-semibold ${accentStyles.headCell}`}>
                 {board.row_label}
               </th>
-              {board.day_columns.map((day) => (
-                <th key={day} className={`px-2 py-3 text-center font-semibold ${accentStyles.headText}`}>
-                  {day}
-                </th>
-              ))}
+              {board.day_columns.map((day) => {
+                const isWarningDay =
+                  board.column_type === "days" &&
+                  typeof day === "number" &&
+                  board.warning_after !== null &&
+                  day > board.warning_after;
+                return (
+                  <th
+                    key={String(day)}
+                    className={`px-2 py-3 text-center font-semibold ${
+                      isWarningDay
+                        ? darkMode
+                          ? "bg-amber-950/65 text-amber-200"
+                          : "bg-amber-100/95 text-amber-900"
+                        : accentStyles.headText
+                    }`}
+                  >
+                    {day}
+                  </th>
+                );
+              })}
               <th className={`px-2 py-3 text-center font-semibold ${darkMode ? "text-rose-300" : "text-rose-700"}`}>Vencidos</th>
               <th className={`px-2 py-3 text-center font-semibold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>Total general</th>
             </tr>
@@ -379,8 +487,30 @@ function BoardTable({ board, darkMode }: { board: BoardData; darkMode: boolean }
                 </td>
                 {board.day_columns.map((day) => {
                   const value = row.counts[String(day)] ?? 0;
+                  const isWarningDay =
+                    board.column_type === "days" &&
+                    typeof day === "number" &&
+                    board.warning_after !== null &&
+                    day > board.warning_after;
+                  const isUrgentDay =
+                    board.column_type === "days" &&
+                    typeof day === "number" &&
+                    day <= 10;
                   return (
-                    <td key={`${row.responsable}-${day}`} className={`px-2 py-2.5 text-center ${darkMode ? "text-slate-300" : "text-slate-700"} ${day <= 10 && value > 0 ? (darkMode ? "bg-amber-900/35 text-amber-200 font-semibold" : "bg-amber-100/90 text-amber-900 font-semibold") : ""}`}>
+                    <td
+                      key={`${row.responsable}-${String(day)}`}
+                      className={`px-2 py-2.5 text-center ${darkMode ? "text-slate-300" : "text-slate-700"} ${
+                        isWarningDay && value > 0
+                          ? darkMode
+                            ? "bg-amber-950/60 text-amber-200 font-semibold"
+                            : "bg-yellow-100/95 text-amber-900 font-semibold"
+                          : isUrgentDay && value > 0
+                            ? darkMode
+                              ? "bg-amber-900/35 text-amber-200 font-semibold"
+                              : "bg-amber-100/90 text-amber-900 font-semibold"
+                            : ""
+                      }`}
+                    >
                       {value || ""}
                     </td>
                   );
@@ -395,11 +525,30 @@ function BoardTable({ board, darkMode }: { board: BoardData; darkMode: boolean }
           <tfoot>
             <tr className={darkMode ? "border-t border-slate-600 bg-slate-950/90" : "border-t border-slate-300 bg-slate-100/90"}>
               <td className={`sticky left-0 z-10 px-3 py-3 font-bold ${darkMode ? "bg-slate-950 text-slate-100" : "bg-slate-100 text-slate-900"}`}>Total general</td>
-              {board.day_columns.map((day) => (
-                <td key={`tot-${day}`} className={`px-2 py-3 text-center font-bold ${darkMode ? "text-slate-200" : "text-slate-900"}`}>
-                  {board.totals.counts[String(day)] || ""}
-                </td>
-              ))}
+              {board.day_columns.map((day) => {
+                const totalValue = board.totals.counts[String(day)] || "";
+                const isWarningDay =
+                  board.column_type === "days" &&
+                  typeof day === "number" &&
+                  board.warning_after !== null &&
+                  day > board.warning_after;
+                return (
+                  <td
+                    key={`tot-${String(day)}`}
+                    className={`px-2 py-3 text-center font-bold ${
+                      isWarningDay && totalValue
+                        ? darkMode
+                          ? "bg-amber-950/55 text-amber-200"
+                          : "bg-yellow-100/95 text-amber-900"
+                        : darkMode
+                          ? "text-slate-200"
+                          : "text-slate-900"
+                    }`}
+                  >
+                    {totalValue}
+                  </td>
+                );
+              })}
               <td className={`px-2 py-3 text-center font-bold ${darkMode ? "text-rose-200" : "text-rose-800"}`}>{board.totals.vencidos || ""}</td>
               <td className={`px-2 py-3 text-center font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{board.totals.total_general}</td>
             </tr>
@@ -410,8 +559,31 @@ function BoardTable({ board, darkMode }: { board: BoardData; darkMode: boolean }
   );
 }
 
-function MiniBarChart({ title, data, darkMode }: { title: string; data: ChartPoint[]; darkMode: boolean }) {
+function MiniBarChart({
+  title,
+  data,
+  darkMode,
+  filterValue,
+  onFilterChange,
+  filterOptions,
+  filterLabel = "Filtro"
+}: {
+  title: string;
+  data: ChartPoint[];
+  darkMode: boolean;
+  filterValue?: string;
+  onFilterChange?: (value: string) => void;
+  filterOptions?: string[];
+  filterLabel?: string;
+}) {
+  const COLLAPSED_LIMIT = 12;
+  const [expanded, setExpanded] = useState(false);
+  useEffect(() => {
+    setExpanded(false);
+  }, [data, filterValue]);
   const maxValue = Math.max(...data.map((item) => item.count), 1);
+  const visibleData = expanded ? data : data.slice(0, COLLAPSED_LIMIT);
+  const canExpand = data.length > COLLAPSED_LIMIT;
   const chartAccent =
     title.includes("Estatus")
       ? {
@@ -433,10 +605,29 @@ function MiniBarChart({ title, data, darkMode }: { title: string; data: ChartPoi
   return (
     <section className="card relative overflow-hidden p-5">
       <div className={`absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent ${chartAccent.line} to-transparent`} />
-      <h3 className={`mb-4 text-base font-semibold tracking-tight ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{title}</h3>
+      <div className="mb-4 flex items-end justify-between gap-3">
+        <h3 className={`text-base font-semibold tracking-tight ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{title}</h3>
+        {onFilterChange && filterOptions && (
+          <div className="w-44">
+            <label className={`mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{filterLabel}</label>
+            <select
+              value={filterValue ?? ""}
+              onChange={(event) => onFilterChange(event.target.value)}
+              className={`w-full rounded-2xl border px-3 py-2 text-sm ${darkMode ? "border-slate-700 bg-slate-900/80 text-slate-100" : "border-slate-300 bg-white/90 text-slate-800"}`}
+            >
+              <option value="">Todos</option>
+              {filterOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+      </div>
       <div className="space-y-2">
         {data.length === 0 && <p className={`text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Sin datos.</p>}
-        {data.map((item) => (
+        {visibleData.map((item) => (
           <div key={`${title}-${item.label}`} className="space-y-1.5">
             <div className="flex items-center justify-between text-xs">
               <span className={`truncate pr-2 ${darkMode ? "text-slate-300" : "text-slate-700"}`}>{item.label}</span>
@@ -530,9 +721,10 @@ function MultiSelectFilter({ label, options, selected, onChange, darkMode }: Mul
 }
 
 export default function HomePage() {
+  const [baseMode, setBaseMode] = useState<BaseMode | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [sharepointUrl, setSharepointUrl] = useState("");
-  const [sheetName, setSheetName] = useState("Procesos Adminis_Penal");
+  const [sheetName, setSheetName] = useState(DEFAULT_SHEET_BY_MODE.administrativa);
   const [loading, setLoading] = useState(false);
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [loadingStage, setLoadingStage] = useState("");
@@ -545,6 +737,8 @@ export default function HomePage() {
   const [diagnosticData, setDiagnosticData] = useState<SharepointDiagnosticResponse | null>(null);
   const [filterEstatus, setFilterEstatus] = useState<string[]>([]);
   const [filterEstado, setFilterEstado] = useState<string[]>([]);
+  const [estatusPanelFilter, setEstatusPanelFilter] = useState("");
+  const [exportingReport, setExportingReport] = useState(false);
 
   useEffect(() => {
     const enabled = window.localStorage.getItem("dark_mode") === "1";
@@ -560,6 +754,7 @@ export default function HomePage() {
   useEffect(() => {
     setFilterEstatus([]);
     setFilterEstado([]);
+    setEstatusPanelFilter("");
   }, [data]);
 
   const requestPreview = (formData: FormData) =>
@@ -615,6 +810,10 @@ export default function HomePage() {
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!baseMode) {
+      setError("Selecciona primero el tipo de base.");
+      return;
+    }
     const hasFile = !!file;
     const hasSharepoint = sharepointUrl.trim().length > 0;
     if (!hasFile && !hasSharepoint) {
@@ -632,6 +831,7 @@ export default function HomePage() {
     if (file) formData.append("file", file);
     if (hasSharepoint) formData.append("sharepoint_url", sharepointUrl.trim());
     formData.append("sheet_name", sheetName);
+    formData.append("base_mode", baseMode);
 
     try {
       const parsed = await requestPreview(formData);
@@ -646,6 +846,11 @@ export default function HomePage() {
   };
 
   const onDiagnoseSharepoint = async () => {
+    if (!baseMode) {
+      setDiagnosticError("Selecciona primero el tipo de base.");
+      setDiagnosticData(null);
+      return;
+    }
     const url = sharepointUrl.trim();
     if (!url) {
       setDiagnosticError("Pega un link de SharePoint para diagnostico.");
@@ -669,25 +874,121 @@ export default function HomePage() {
     }
   };
 
+  const downloadBoardSummary = async (
+    rows: ControlRecord[],
+    responsableHeader: string,
+    filename: string
+  ) => {
+    try {
+      setExportingReport(true);
+      const exportRows = rows.map((row) => ({
+        Aviso_T2: row.Aviso_T2,
+        Fecha_Aviso: row.Fecha_Aviso,
+        "Cuenta Contrato": row["Cuenta Contrato"],
+        Anomalia_Visitada: row.Anomalia_Visitada,
+        [responsableHeader]: row.Responsable,
+        Dias: String(row.DiasInt),
+        Estatus: row.Estatus,
+        Estado: row.Estado,
+      }));
+      const response = await fetch(`${API_URL}/api/report/download`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ records: exportRows, filename }),
+      });
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => ({}))) as { detail?: string };
+        throw new Error(payload.detail ?? "No se pudo generar el resumen.");
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename.endsWith(".xlsx") ? filename : `${filename}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo descargar el resumen.");
+    } finally {
+      setExportingReport(false);
+    }
+  };
+
+  const downloadMedidoresPendientes = async () => {
+    try {
+      setExportingReport(true);
+      const response = await fetch(`${API_URL}/api/report/download`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          records: medidoresPendientes,
+          filename: "medidores_pendientes.xlsx",
+        }),
+      });
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => ({}))) as { detail?: string };
+        throw new Error(payload.detail ?? "No se pudo generar el archivo.");
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "medidores_pendientes.xlsx";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo descargar el resumen.");
+    } finally {
+      setExportingReport(false);
+    }
+  };
+
   const onFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     setFile(event.target.files?.[0] ?? null);
     setError(null);
   };
 
+  const onSelectBaseMode = (mode: BaseMode) => {
+    setBaseMode(mode);
+    setSheetName(DEFAULT_SHEET_BY_MODE[mode]);
+    setFile(null);
+    setSharepointUrl("");
+    setData(null);
+    setError(null);
+    setDiagnosticData(null);
+    setDiagnosticError(null);
+  };
+
   const adminRecords = data?.admin_control_records ?? [];
   const penalRecords = data?.penal_control_records ?? [];
-  const procedenciaRecords = data?.procedencia_control_records ?? [];
+  const noProcedenteRecords = data?.no_procedente_control_records ?? [];
+  const chartRecords = data?.chart_records ?? [];
+  const medidoresRetiradoPor = data?.medidores_retirado_por ?? [];
+  const medidoresConcepto = data?.medidores_concepto ?? [];
+  const medidoresPendientes = data?.medidores_pendientes ?? [];
+  const medidoresLiquidacionM3 = data?.medidores_liquidacion_m3 ?? [];
+  const medidoresPendientesLiquidar = data?.medidores_pendientes_liquidar ?? 0;
+  const medidoresTotal = data?.medidores_total ?? 0;
+  const isMedidoresMode = baseMode === "medidores";
 
   const estatusOptions = useMemo(() => {
-    return Array.from(new Set(adminRecords.map((row) => row.Estatus).filter(Boolean))).sort((a, b) => a.localeCompare(b, "es"));
-  }, [adminRecords]);
+    return data?.all_estatus_options ?? [];
+  }, [data?.all_estatus_options]);
 
   const estadoOptions = useMemo(() => {
-    return Array.from(new Set(adminRecords.map((row) => row.Estado).filter(Boolean))).sort((a, b) => a.localeCompare(b, "es"));
-  }, [adminRecords]);
+    return data?.all_estado_options ?? [];
+  }, [data?.all_estado_options]);
 
   const filteredAdminRecords = useMemo(() => {
     return adminRecords.filter((row) => {
+      const matchesDefaultAdmin = DEFAULT_ADMIN_ESTATUS.some(
+        (item) => normalizeForSearch(item) === normalizeForSearch(row.Estatus)
+      );
+      if (!matchesDefaultAdmin) return false;
       if (
         filterEstatus.length > 0 &&
         !filterEstatus.some((item) => normalizeForSearch(item) === normalizeForSearch(row.Estatus))
@@ -702,6 +1003,10 @@ export default function HomePage() {
 
   const filteredPenalRecords = useMemo(() => {
     return penalRecords.filter((row) => {
+      const matchesDefaultPenal = DEFAULT_PENAL_ESTATUS.some(
+        (item) => normalizeForSearch(item) === normalizeForSearch(row.Estatus)
+      );
+      if (!matchesDefaultPenal) return false;
       if (
         filterEstatus.length > 0 &&
         !filterEstatus.some((item) => normalizeForSearch(item) === normalizeForSearch(row.Estatus))
@@ -714,20 +1019,6 @@ export default function HomePage() {
     });
   }, [penalRecords, filterEstatus, filterEstado]);
 
-  const filteredProcedenciaRecords = useMemo(() => {
-    return procedenciaRecords.filter((row) => {
-      if (
-        filterEstado.length > 0 &&
-        !filterEstado.some((item) => normalizeForSearch(item) === normalizeForSearch(row.Estado))
-      ) return false;
-      if (
-        filterEstatus.length > 0 &&
-        !filterEstatus.some((item) => normalizeForSearch(item) === normalizeForSearch(row.Estatus))
-      ) return false;
-      return true;
-    });
-  }, [procedenciaRecords, filterEstatus, filterEstado]);
-
   const adminBoard = useMemo(
     () =>
       buildBoardFromRecords(
@@ -735,7 +1026,9 @@ export default function HomePage() {
         "Tablero de Responsables Administrativos",
         "Solo muestra pendientes con Estatus que contengan para expediente o para administrativo, incluyendo mixtos. Si el responsable viene vacio, se marca como Pendiente por asignar.",
         "Responsable Administrativo",
-        "teal"
+        "teal",
+        45,
+        null
       ),
     [filteredAdminRecords]
   );
@@ -747,29 +1040,55 @@ export default function HomePage() {
         "Tablero de Responsables Penales",
         "Solo muestra pendientes con Estatus que contengan para expediente o para administrativo, incluyendo mixtos. Si el responsable viene vacio, se marca como Pendiente por asignar.",
         "Responsable Penal",
-        "amber"
+        "amber",
+        45,
+        null
       ),
     [filteredPenalRecords]
   );
 
-  const procedenciaBoard = useMemo(
+  const filteredNoProcedenteRecords = useMemo(() => {
+    return noProcedenteRecords.filter((row) => {
+      if (
+        filterEstado.length > 0 &&
+        !filterEstado.some((item) => normalizeForSearch(item) === normalizeForSearch(row.Estado))
+      ) return false;
+      return true;
+    });
+  }, [noProcedenteRecords, filterEstado]);
+
+  const noProcedenteBoard = useMemo(
     () =>
       buildBoardFromRecords(
-        filteredProcedenciaRecords,
-        "Tablero de Pendiente Determinar Procedencia (45 días)",
-        "Solo muestra estatus Pendiente determinar procedencia. La asignación sale de la columna Liquidación y el horizonte es de 45 días.",
+        filteredNoProcedenteRecords,
+        "Tablero de Pendiente Determinar Procedencia",
+        "Solo muestra registros con Estatus Pendiente determinar procedencia. La asignación sale de la columna Liquidación y los días se calculan desde la fecha actual contra Fecha de Vencimiento.",
         "Liquidación",
-        "rose"
+        "rose",
+        60,
+        45
       ),
-    [filteredProcedenciaRecords]
+    [filteredNoProcedenteRecords]
   );
 
-  const allFilteredRecords = useMemo(
-    () => [...filteredAdminRecords, ...filteredPenalRecords, ...filteredProcedenciaRecords],
-    [filteredAdminRecords, filteredPenalRecords, filteredProcedenciaRecords]
-  );
+  const filteredChartRecords = useMemo(() => {
+    return chartRecords.filter((row) => {
+      if (
+        filterEstatus.length > 0 &&
+        !filterEstatus.some((item) => normalizeForSearch(item) === normalizeForSearch(row.Estatus))
+      ) return false;
+      if (
+        filterEstado.length > 0 &&
+        !filterEstado.some((item) => normalizeForSearch(item) === normalizeForSearch(row.Estado))
+      ) return false;
+      return true;
+    });
+  }, [chartRecords, filterEstatus, filterEstado]);
 
-  const buildTopCounts = (rows: typeof allFilteredRecords, key: "Estatus" | "Estado", topN = 12): ChartPoint[] => {
+  const buildCountsFromRows = (
+    rows: { Estatus: string; Estado: string }[],
+    key: "Estatus" | "Estado"
+  ): ChartPoint[] => {
     const counts = new Map<string, number>();
     for (const row of rows) {
       const label = String(row[key] ?? "").trim();
@@ -778,23 +1097,54 @@ export default function HomePage() {
     }
     return Array.from(counts.entries())
       .map(([label, count]) => ({ label, count }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, topN);
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, "es"));
   };
 
-  const estatusChart = useMemo(() => buildTopCounts(allFilteredRecords, "Estatus", 12), [allFilteredRecords]);
-  const estadoChart = useMemo(() => buildTopCounts(allFilteredRecords, "Estado", 12), [allFilteredRecords]);
+  const estatusChart = useMemo(() => {
+    const allCounts = buildCountsFromRows(filteredChartRecords, "Estatus");
+    if (!estatusPanelFilter) return allCounts;
+    return allCounts.filter((item) => normalizeForSearch(item.label) === normalizeForSearch(estatusPanelFilter));
+  }, [filteredChartRecords, estatusPanelFilter]);
+  const estadoChart = useMemo(() => {
+    const rows = filteredChartRecords.filter((row) => {
+      if (!estatusPanelFilter) return true;
+      return normalizeForSearch(row.Estatus) === normalizeForSearch(estatusPanelFilter);
+    });
+    return buildCountsFromRows(rows, "Estado");
+  }, [filteredChartRecords, estatusPanelFilter]);
   const pendientesClaveChart = useMemo(() => {
     const normalizeContains = (text: string, target: string) => normalizeForSearch(text).includes(normalizeForSearch(target));
-    const paraAdministrativo = allFilteredRecords.filter((row) => normalizeContains(row.Estatus, "para administrativo")).length;
-    const paraExpediente = allFilteredRecords.filter((row) => normalizeContains(row.Estatus, "para expediente")).length;
-    const procedencia = filteredProcedenciaRecords.length;
-    return [
-      { label: "Para administrativo", count: paraAdministrativo },
-      { label: "Para expediente", count: paraExpediente },
-      { label: "Pendiente procedencia", count: procedencia }
-    ].filter((item) => item.count > 0);
-  }, [allFilteredRecords, filteredProcedenciaRecords]);
+    const pendingItems = estatusOptions.filter((item) => {
+      const normalized = normalizeForSearch(item);
+      return (
+        normalized.includes("para administrativo") ||
+        normalized.includes("para expediente")
+      );
+    });
+    return pendingItems
+      .map((item) => ({
+        label: item,
+        count: filteredChartRecords.filter((row) => normalizeForSearch(row.Estatus) === normalizeForSearch(item)).length
+      }))
+      .filter((item) => item.count > 0)
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, "es"));
+  }, [estatusOptions, filteredChartRecords]);
+
+  const observationChart = useMemo(() => {
+    const rows = filteredChartRecords.filter((row) => {
+      if (!estatusPanelFilter) return true;
+      return normalizeForSearch(row.Estatus) === normalizeForSearch(estatusPanelFilter);
+    });
+    const counts = new Map<string, number>();
+    for (const row of rows) {
+      const label = String(row.Observaciones ?? "").trim();
+      if (!label) continue;
+      counts.set(label, (counts.get(label) ?? 0) + 1);
+    }
+    return Array.from(counts.entries())
+      .map(([label, count]) => ({ label, count }))
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, "es"));
+  }, [filteredChartRecords, estatusPanelFilter]);
 
   return (
     <main className="relative mx-auto min-h-screen max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
@@ -858,37 +1208,80 @@ export default function HomePage() {
       <section className="card reveal-up reveal-delay-1 relative mb-8 overflow-hidden p-6 sm:p-7">
         <div className={`absolute inset-x-6 top-0 h-px ${darkMode ? "bg-gradient-to-r from-transparent via-cyan-300/60 to-transparent" : "bg-gradient-to-r from-transparent via-cyan-500/60 to-transparent"}`} />
         <form onSubmit={onSubmit} className="grid gap-4 sm:grid-cols-12">
-          <div className="sm:col-span-4">
-            <label className={`mb-2 block text-sm font-medium ${darkMode ? "text-slate-200" : "text-slate-700"}`}>Archivo Excel</label>
-            <div className={`group relative overflow-hidden rounded-[22px] border p-2 shadow-sm ${darkMode ? "border-slate-700 bg-slate-900/70" : "border-slate-300 bg-white/90"}`}>
-              <input id="excel-file" type="file" accept=".xlsx,.xlsm,.xltx,.xltm" onChange={onFileChange} className="absolute inset-0 cursor-pointer opacity-0" />
-              <div className="flex min-h-[52px] items-center gap-3">
-                <label htmlFor="excel-file" className={`inline-flex shrink-0 items-center rounded-2xl px-4 py-2 text-sm font-semibold shadow-sm transition ${darkMode ? "bg-gradient-to-r from-cyan-500 to-emerald-500 text-slate-950 group-hover:brightness-110" : "bg-gradient-to-r from-cyan-600 to-emerald-500 text-white group-hover:brightness-105"}`}>
-                  Seleccionar archivo
-                </label>
-                <div className="min-w-0">
-                  <p className={`truncate text-sm font-medium ${darkMode ? "text-slate-100" : "text-slate-800"}`}>{file?.name ?? "Ningún archivo seleccionado"}</p>
-                  <p className={`mt-0.5 text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Formatos permitidos: .xlsx, .xlsm, .xltx, .xltm</p>
-                </div>
-              </div>
+          <div className="sm:col-span-12">
+            <label className={`mb-3 block text-sm font-medium ${darkMode ? "text-slate-200" : "text-slate-700"}`}>Tipo de base</label>
+            <div className="grid gap-3 md:grid-cols-2">
+              {([
+                {
+                  key: "administrativa" as const,
+                  title: "Base administrativa",
+                  description: "Usa la lectura de procesos administrativos, penales y procedencia."
+                },
+                {
+                  key: "medidores" as const,
+                  title: "Base de medidores",
+                  description: "Prepara la carga para la nueva base de medidores y su analisis independiente."
+                }
+              ]).map((option) => {
+                const active = baseMode === option.key;
+                return (
+                  <button
+                    key={option.key}
+                    type="button"
+                    onClick={() => onSelectBaseMode(option.key)}
+                    className={`rounded-[24px] border px-5 py-4 text-left transition ${
+                      active
+                        ? darkMode
+                          ? "border-cyan-500/70 bg-cyan-500/10 shadow-[0_0_0_1px_rgba(34,211,238,0.25)]"
+                          : "border-cyan-500/60 bg-cyan-50 shadow-[0_0_0_1px_rgba(6,182,212,0.18)]"
+                        : darkMode
+                          ? "border-slate-700 bg-slate-900/50 hover:border-slate-600 hover:bg-slate-900/75"
+                          : "border-slate-200 bg-white/80 hover:border-slate-300 hover:bg-slate-50"
+                    }`}
+                  >
+                    <p className={`text-base font-semibold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{option.title}</p>
+                    <p className={`mt-1 text-sm leading-6 ${darkMode ? "text-slate-400" : "text-slate-600"}`}>{option.description}</p>
+                  </button>
+                );
+              })}
             </div>
           </div>
-          <div className="sm:col-span-5">
-            <label className={`mb-2 block text-sm font-medium ${darkMode ? "text-slate-200" : "text-slate-700"}`}>Si es archivo de SharePoint, pega el link aqui</label>
-            <input type="url" value={sharepointUrl} onChange={(e) => setSharepointUrl(e.target.value)} placeholder="https://tuempresa.sharepoint.com/.../archivo.xlsx" className={`block w-full rounded-xl border px-3 py-2 text-sm ${darkMode ? "border-slate-700 bg-slate-900/70 text-slate-100" : "border-slate-300 text-slate-800"}`} />
-          </div>
-          <div className="sm:col-span-3">
-            <label className={`mb-2 block text-sm font-medium ${darkMode ? "text-slate-200" : "text-slate-700"}`}>Nombre de hoja</label>
-            <input type="text" value={sheetName} onChange={(e) => setSheetName(e.target.value)} className={`block w-full rounded-xl border px-3 py-2 text-sm ${darkMode ? "border-slate-700 bg-slate-900/70 text-slate-100" : "border-slate-300 text-slate-800"}`} />
-          </div>
-          <div className="sm:col-span-12 sm:flex sm:items-end sm:justify-end sm:gap-3">
-            <button type="button" onClick={onDiagnoseSharepoint} disabled={diagnosingSharepoint} className={`w-full sm:w-64 rounded-xl border px-4 py-2.5 text-sm font-semibold transition disabled:opacity-60 ${darkMode ? "border-slate-600 bg-slate-900/70 text-slate-100 hover:bg-slate-800" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"}`}>
-              {diagnosingSharepoint ? "Probando..." : "Probar link SharePoint"}
-            </button>
-            <button type="submit" disabled={loading} className={`w-full sm:w-64 rounded-xl px-4 py-2.5 text-sm font-semibold text-white transition disabled:opacity-60 ${darkMode ? "bg-brand-600 hover:bg-brand-500" : "bg-slate-900 hover:bg-slate-800"}`}>
-              {loading ? "Procesando..." : "Leer Excel"}
-            </button>
-          </div>
+
+          {baseMode && (
+            <>
+              <div className="sm:col-span-4">
+                <label className={`mb-2 block text-sm font-medium ${darkMode ? "text-slate-200" : "text-slate-700"}`}>Archivo Excel</label>
+                <div className={`group relative overflow-hidden rounded-[22px] border p-2 shadow-sm ${darkMode ? "border-slate-700 bg-slate-900/70" : "border-slate-300 bg-white/90"}`}>
+                  <input id="excel-file" type="file" accept=".xlsx,.xlsm,.xltx,.xltm" onChange={onFileChange} className="absolute inset-0 cursor-pointer opacity-0" />
+                  <div className="flex min-h-[52px] items-center gap-3">
+                    <label htmlFor="excel-file" className={`inline-flex shrink-0 items-center rounded-2xl px-4 py-2 text-sm font-semibold shadow-sm transition ${darkMode ? "bg-gradient-to-r from-cyan-500 to-emerald-500 text-slate-950 group-hover:brightness-110" : "bg-gradient-to-r from-cyan-600 to-emerald-500 text-white group-hover:brightness-105"}`}>
+                      Seleccionar archivo
+                    </label>
+                    <div className="min-w-0">
+                      <p className={`truncate text-sm font-medium ${darkMode ? "text-slate-100" : "text-slate-800"}`}>{file?.name ?? "Ningún archivo seleccionado"}</p>
+                      <p className={`mt-0.5 text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Formatos permitidos: .xlsx, .xlsm, .xltx, .xltm</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div className="sm:col-span-5">
+                <label className={`mb-2 block text-sm font-medium ${darkMode ? "text-slate-200" : "text-slate-700"}`}>Si es archivo de SharePoint, pega el link aqui</label>
+                <input type="url" value={sharepointUrl} onChange={(e) => setSharepointUrl(e.target.value)} placeholder="https://tuempresa.sharepoint.com/.../archivo.xlsx" className={`block w-full rounded-xl border px-3 py-2 text-sm ${darkMode ? "border-slate-700 bg-slate-900/70 text-slate-100" : "border-slate-300 text-slate-800"}`} />
+              </div>
+              <div className="sm:col-span-3">
+                <label className={`mb-2 block text-sm font-medium ${darkMode ? "text-slate-200" : "text-slate-700"}`}>Nombre de hoja</label>
+                <input type="text" value={sheetName} onChange={(e) => setSheetName(e.target.value)} className={`block w-full rounded-xl border px-3 py-2 text-sm ${darkMode ? "border-slate-700 bg-slate-900/70 text-slate-100" : "border-slate-300 text-slate-800"}`} />
+              </div>
+              <div className="sm:col-span-12 sm:flex sm:items-end sm:justify-end sm:gap-3">
+                <button type="button" onClick={onDiagnoseSharepoint} disabled={diagnosingSharepoint} className={`w-full sm:w-64 rounded-xl border px-4 py-2.5 text-sm font-semibold transition disabled:opacity-60 ${darkMode ? "border-slate-600 bg-slate-900/70 text-slate-100 hover:bg-slate-800" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"}`}>
+                  {diagnosingSharepoint ? "Probando..." : "Probar link SharePoint"}
+                </button>
+                <button type="submit" disabled={loading} className={`w-full sm:w-64 rounded-xl px-4 py-2.5 text-sm font-semibold text-white transition disabled:opacity-60 ${darkMode ? "bg-brand-600 hover:bg-brand-500" : "bg-slate-900 hover:bg-slate-800"}`}>
+                  {loading ? "Procesando..." : "Leer Excel"}
+                </button>
+              </div>
+            </>
+          )}
           {loading && (
             <div className="sm:col-span-12">
               <div className={`overflow-hidden rounded-2xl border p-4 ${darkMode ? "border-slate-700 bg-slate-900/60" : "border-slate-200 bg-slate-50"}`}>
@@ -919,7 +1312,7 @@ export default function HomePage() {
         )}
       </section>
 
-      {data && (
+      {data && !isMedidoresMode && (
         <section className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
           <div className={`metric-card reveal-up reveal-delay-1 rounded-[26px] border p-5 ${darkMode ? "border-cyan-950/40 bg-slate-900/60" : "border-cyan-100 bg-white/90"}`}>
             <p className={`text-xs uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Hoja usada</p>
@@ -938,13 +1331,38 @@ export default function HomePage() {
             <p className={`mt-2 text-2xl font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{penalRecords.length}</p>
           </div>
           <div className={`metric-card reveal-up reveal-delay-5 rounded-[26px] border p-5 ${darkMode ? "border-rose-950/40 bg-slate-900/60" : "border-rose-100 bg-white/90"}`}>
-            <p className={`text-xs uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Pendientes procedencia</p>
-            <p className={`mt-2 text-2xl font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{procedenciaRecords.length}</p>
+            <p className={`text-xs uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Pendiente procedencia</p>
+            <p className={`mt-2 text-2xl font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{noProcedenteRecords.length}</p>
           </div>
         </section>
       )}
 
-      {data && (
+      {data && isMedidoresMode && (
+        <section className="mb-8 grid gap-4 md:grid-cols-5">
+          <div className={`metric-card reveal-up reveal-delay-1 rounded-[26px] border p-5 ${darkMode ? "border-cyan-950/40 bg-slate-900/60" : "border-cyan-100 bg-white/90"}`}>
+            <p className={`text-xs uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Hoja usada</p>
+            <p className={`mt-2 text-2xl font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{data.sheet_used}</p>
+          </div>
+          <div className={`metric-card reveal-up reveal-delay-2 rounded-[26px] border p-5 ${darkMode ? "border-sky-950/40 bg-slate-900/60" : "border-sky-100 bg-white/90"}`}>
+            <p className={`text-xs uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Filas leidas</p>
+            <p className={`mt-2 text-2xl font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{data.source_total_rows}</p>
+          </div>
+          <div className={`metric-card reveal-up reveal-delay-3 rounded-[26px] border p-5 ${darkMode ? "border-emerald-950/40 bg-slate-900/60" : "border-emerald-100 bg-white/90"}`}>
+            <p className={`text-xs uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Retiros contabilizados</p>
+            <p className={`mt-2 text-2xl font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{medidoresTotal}</p>
+          </div>
+          <div className={`metric-card reveal-up reveal-delay-4 rounded-[26px] border p-5 ${darkMode ? "border-amber-950/40 bg-slate-900/60" : "border-amber-100 bg-white/90"}`}>
+            <p className={`text-xs uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Pendientes por concepto</p>
+            <p className={`mt-2 text-2xl font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{medidoresPendientes.length}</p>
+          </div>
+          <div className={`metric-card reveal-up reveal-delay-5 rounded-[26px] border p-5 ${darkMode ? "border-rose-950/40 bg-slate-900/60" : "border-rose-100 bg-white/90"}`}>
+            <p className={`text-xs uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Pendientes por liquidar</p>
+            <p className={`mt-2 text-2xl font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{medidoresPendientesLiquidar}</p>
+          </div>
+        </section>
+      )}
+
+      {data && !isMedidoresMode && (
         <section className="card panel-grid reveal-up reveal-delay-2 relative z-20 mb-8 overflow-visible p-6 sm:p-7">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
@@ -986,20 +1404,389 @@ export default function HomePage() {
         </section>
       )}
 
-      {data && (
-        <section className="mb-8 grid gap-6 lg:grid-cols-3">
-          <div className="reveal-up reveal-delay-2"><MiniBarChart title="Estatus (Top)" data={estatusChart} darkMode={darkMode} /></div>
-          <div className="reveal-up reveal-delay-3"><MiniBarChart title="Estado (Top)" data={estadoChart} darkMode={darkMode} /></div>
-          <div className="reveal-up reveal-delay-4"><MiniBarChart title="Pendientes Clave (Totales)" data={pendientesClaveChart} darkMode={darkMode} /></div>
+      {data && !isMedidoresMode && (
+        <section className="mb-8">
+          <section className="grid gap-6 xl:grid-cols-2 2xl:grid-cols-4">
+          <div className="reveal-up reveal-delay-2">
+            <MiniBarChart
+              title="Estatus"
+              data={estatusChart}
+              darkMode={darkMode}
+              filterValue={estatusPanelFilter}
+              onFilterChange={setEstatusPanelFilter}
+              filterOptions={estatusOptions}
+              filterLabel="Estatus"
+            />
+          </div>
+          <div className="reveal-up reveal-delay-3"><MiniBarChart title="Estado" data={estadoChart} darkMode={darkMode} /></div>
+          <div className="reveal-up reveal-delay-4"><MiniBarChart title="Pendientes Clave" data={pendientesClaveChart} darkMode={darkMode} /></div>
+          <div className="reveal-up reveal-delay-5">
+            <ObservationChart
+              title="Observaciones"
+              data={observationChart}
+              darkMode={darkMode}
+              activeEstatus={estatusPanelFilter}
+            />
+          </div>
+          </section>
         </section>
       )}
 
-      {data && <div className="reveal-up reveal-delay-2"><BoardTable board={adminBoard} darkMode={darkMode} /></div>}
+      {data && !isMedidoresMode && (
+        <div className="reveal-up reveal-delay-2">
+          <BoardTable
+            board={adminBoard}
+            darkMode={darkMode}
+            onDownloadSummary={() => downloadBoardSummary(filteredAdminRecords, "Responsable Administrativo", "resumen_administrativos.xlsx")}
+            downloadingSummary={exportingReport}
+          />
+        </div>
+      )}
 
-      {data && <div className="reveal-up reveal-delay-3"><BoardTable board={penalBoard} darkMode={darkMode} /></div>}
+      {data && !isMedidoresMode && (
+        <div className="reveal-up reveal-delay-3">
+          <BoardTable
+            board={penalBoard}
+            darkMode={darkMode}
+            onDownloadSummary={() => downloadBoardSummary(filteredPenalRecords, "Responsable Penal", "resumen_penales.xlsx")}
+            downloadingSummary={exportingReport}
+          />
+        </div>
+      )}
 
-      {data && <div className="reveal-up reveal-delay-4"><BoardTable board={procedenciaBoard} darkMode={darkMode} /></div>}
+      {data && !isMedidoresMode && (
+        <div className="reveal-up reveal-delay-4">
+          <BoardTable
+            board={noProcedenteBoard}
+            darkMode={darkMode}
+            onDownloadSummary={() => downloadBoardSummary(filteredNoProcedenteRecords, "Liquidación", "resumen_pendiente_determinar_procedencia.xlsx")}
+            downloadingSummary={exportingReport}
+          />
+        </div>
+      )}
+
+      {data && isMedidoresMode && (
+        <section className="mb-8 grid gap-6 xl:grid-cols-3">
+          <div className="reveal-up reveal-delay-2">
+            <MedidoresRetiradoChart data={medidoresRetiradoPor} darkMode={darkMode} />
+          </div>
+          <div className="reveal-up reveal-delay-3">
+            <MedidoresConceptoChart data={medidoresConcepto} darkMode={darkMode} />
+          </div>
+          <div className="reveal-up reveal-delay-4">
+            <MedidoresLiquidacionCard
+              data={medidoresLiquidacionM3}
+              darkMode={darkMode}
+            />
+          </div>
+        </section>
+      )}
+
+      {data && isMedidoresMode && (
+        <div className="reveal-up reveal-delay-5 mb-8">
+          <DataTableCard
+            title="Cuentas contrato con concepto Pendiente"
+            rows={medidoresPendientes}
+            darkMode={darkMode}
+            actionLabel="Descargar pendientes"
+            onAction={downloadMedidoresPendientes}
+            actionLoading={exportingReport}
+          />
+        </div>
+      )}
 
     </main>
+  );
+}
+
+function DataTableCard({
+  title,
+  rows,
+  darkMode,
+  actionLabel,
+  onAction,
+  actionLoading = false
+}: {
+  title: string;
+  rows: Record<string, string | number | null>[];
+  darkMode: boolean;
+  actionLabel?: string;
+  onAction?: () => void;
+  actionLoading?: boolean;
+}) {
+  const COLLAPSED_LIMIT = 12;
+  const [expanded, setExpanded] = useState(false);
+  useEffect(() => {
+    setExpanded(false);
+  }, [rows]);
+  if (!rows.length) {
+    return (
+      <section className="card p-6">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className={`text-lg font-semibold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{title}</h2>
+          {onAction && actionLabel && (
+            <button
+              type="button"
+              onClick={onAction}
+              disabled={actionLoading}
+              className={`rounded-xl border px-4 py-2 text-sm font-semibold transition disabled:opacity-60 ${darkMode ? "border-slate-600 bg-slate-900/70 text-slate-100 hover:bg-slate-800" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"}`}
+            >
+              {actionLoading ? "Generando..." : actionLabel}
+            </button>
+          )}
+        </div>
+        <p className={`mt-3 text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Sin datos para mostrar.</p>
+      </section>
+    );
+  }
+
+  const headers = Object.keys(rows[0]);
+  const visibleRows = expanded ? rows : rows.slice(0, COLLAPSED_LIMIT);
+  const canExpand = rows.length > COLLAPSED_LIMIT;
+  return (
+    <section className="card p-6">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className={`text-lg font-semibold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{title}</h2>
+        {onAction && actionLabel && (
+          <button
+            type="button"
+            onClick={onAction}
+            disabled={actionLoading}
+            className={`rounded-xl border px-4 py-2 text-sm font-semibold transition disabled:opacity-60 ${darkMode ? "border-slate-600 bg-slate-900/70 text-slate-100 hover:bg-slate-800" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"}`}
+          >
+            {actionLoading ? "Generando..." : actionLabel}
+          </button>
+        )}
+      </div>
+      <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-200/10">
+        <table className="min-w-full text-sm">
+          <thead className={darkMode ? "bg-slate-900/80" : "bg-brand-50"}>
+            <tr>
+              {headers.map((header) => (
+                <th key={header} className={`whitespace-nowrap px-3 py-2 text-left font-semibold ${darkMode ? "text-brand-200" : "text-brand-900"}`}>
+                  {header}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {visibleRows.map((row, index) => (
+              <tr key={index} className={`${darkMode ? "border-slate-800/90 odd:bg-slate-900/40 even:bg-slate-900/70" : "border-slate-100 odd:bg-white even:bg-slate-50/50"} border-t`}>
+                {headers.map((header) => (
+                  <td key={header} className={`whitespace-nowrap px-3 py-2 ${darkMode ? "text-slate-200" : "text-slate-700"}`}>
+                    {row[header] ?? "-"}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {canExpand && (
+        <div className="mt-4 flex justify-end">
+          <button
+            type="button"
+            onClick={() => setExpanded((prev) => !prev)}
+            className={`rounded-xl border px-4 py-2 text-sm font-semibold transition ${darkMode ? "border-slate-600 bg-slate-900/70 text-slate-100 hover:bg-slate-800" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"}`}
+          >
+            {expanded ? "Ver menos" : `Ver más (${rows.length - COLLAPSED_LIMIT})`}
+          </button>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ObservationChart({
+  title,
+  data,
+  darkMode,
+  activeEstatus
+}: {
+  title: string;
+  data: ChartPoint[];
+  darkMode: boolean;
+  activeEstatus: string;
+}) {
+  const COLLAPSED_LIMIT = 12;
+  const [expanded, setExpanded] = useState(false);
+  useEffect(() => {
+    setExpanded(false);
+  }, [data, activeEstatus]);
+  const maxValue = Math.max(...data.map((item) => item.count), 1);
+  const visibleData = expanded ? data : data.slice(0, COLLAPSED_LIMIT);
+  const canExpand = data.length > COLLAPSED_LIMIT;
+  return (
+    <section className="card relative overflow-hidden p-5">
+      <div className={`absolute inset-x-6 top-0 h-px ${darkMode ? "bg-gradient-to-r from-transparent via-fuchsia-300/60 to-transparent" : "bg-gradient-to-r from-transparent via-fuchsia-500/60 to-transparent"}`} />
+      <div className="mb-4 flex items-end justify-between gap-3">
+        <div>
+          <h3 className={`text-base font-semibold tracking-tight ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{title}</h3>
+          <p className={`mt-1 text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+            {activeEstatus ? `Observaciones ligadas a ${activeEstatus}.` : "Observaciones ligadas al estatus visible en el panel de estatus."}
+          </p>
+        </div>
+      </div>
+      <div className="space-y-2">
+        {data.length === 0 && <p className={`text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Sin observaciones para ese filtro.</p>}
+        {visibleData.map((item) => (
+          <div key={`${title}-${item.label}`} className="space-y-1.5">
+            <div className="flex items-center justify-between text-xs">
+              <span className={`truncate pr-2 ${darkMode ? "text-slate-300" : "text-slate-700"}`}>{item.label}</span>
+              <span className={`font-semibold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{item.count}</span>
+            </div>
+            <div className={`h-2.5 rounded-full ${darkMode ? "bg-slate-800" : "bg-slate-200"}`}>
+              <div
+                className={`h-2.5 rounded-full bg-gradient-to-r ${darkMode ? "from-fuchsia-400 via-pink-400 to-rose-500 shadow-[0_12px_30px_-16px_rgba(236,72,153,0.4)]" : "from-fuchsia-500 via-pink-500 to-rose-500 shadow-[0_12px_30px_-16px_rgba(219,39,119,0.28)]"}`}
+                style={{ width: `${(item.count / maxValue) * 100}%` }}
+              />
+            </div>
+          </div>
+        ))}
+        {canExpand && (
+          <button
+            type="button"
+            onClick={() => setExpanded((prev) => !prev)}
+            className={`mt-2 inline-flex rounded-full border px-3 py-1.5 text-xs font-semibold transition ${darkMode ? "border-slate-700 bg-slate-900/80 text-slate-200 hover:bg-slate-800" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"}`}
+          >
+            {expanded ? "Ver menos" : "Ver más"}
+          </button>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function MedidoresRetiradoChart({
+  data,
+  darkMode
+}: {
+  data: { label: string; count: number; percentage: number }[];
+  darkMode: boolean;
+}) {
+  const maxValue = Math.max(...data.map((item) => item.count), 1);
+  return (
+    <section className="card relative overflow-hidden p-6">
+      <div className={`absolute inset-x-6 top-0 h-px ${darkMode ? "bg-gradient-to-r from-transparent via-cyan-300/60 to-transparent" : "bg-gradient-to-r from-transparent via-cyan-500/60 to-transparent"}`} />
+      <div className="mb-5">
+        <p className={`text-[11px] font-semibold uppercase tracking-[0.28em] ${darkMode ? "text-cyan-200/70" : "text-cyan-800/70"}`}>Analisis de medidores</p>
+        <h2 className={`mt-2 text-xl font-semibold tracking-tight ${darkMode ? "text-slate-100" : "text-slate-900"}`}>Retirado por</h2>
+        <p className={`mt-2 text-sm leading-6 ${darkMode ? "text-slate-400" : "text-slate-600"}`}>Conteo total y porcentaje de los retiros segun la columna <span className="font-semibold">Retirado por</span>.</p>
+      </div>
+      <div className="space-y-3">
+        {data.length === 0 && <p className={`text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>No hay registros validos para mostrar.</p>}
+        {data.map((item) => (
+          <div key={item.label} className="space-y-1.5">
+            <div className="flex items-center justify-between gap-3">
+              <p className={`truncate text-sm font-medium ${darkMode ? "text-slate-200" : "text-slate-700"}`}>{item.label}</p>
+              <div className="flex items-center gap-3 text-right">
+                <span className={`text-sm font-semibold tabular-nums ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{item.count}</span>
+                <span className={`min-w-[4.5rem] text-xs font-semibold tabular-nums ${darkMode ? "text-cyan-200" : "text-cyan-700"}`}>{item.percentage.toFixed(2)}%</span>
+              </div>
+            </div>
+            <div className={`h-2.5 overflow-hidden rounded-full ${darkMode ? "bg-slate-800" : "bg-slate-200"}`}>
+              <div
+                className={`h-full rounded-full bg-gradient-to-r ${darkMode ? "from-cyan-400 via-sky-400 to-emerald-400" : "from-cyan-500 via-sky-500 to-emerald-500"}`}
+                style={{ width: `${Math.max((item.count / maxValue) * 100, 6)}%` }}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function MedidoresConceptoChart({
+  data,
+  darkMode
+}: {
+  data: { label: string; count: number; percentage: number }[];
+  darkMode: boolean;
+}) {
+  const maxValue = Math.max(...data.map((item) => item.count), 1);
+  return (
+    <section className="card relative overflow-hidden p-6">
+      <div className={`absolute inset-x-6 top-0 h-px ${darkMode ? "bg-gradient-to-r from-transparent via-amber-300/60 to-transparent" : "bg-gradient-to-r from-transparent via-amber-500/60 to-transparent"}`} />
+      <div className="mb-5">
+        <p className={`text-[11px] font-semibold uppercase tracking-[0.28em] ${darkMode ? "text-amber-200/70" : "text-amber-800/70"}`}>Estado del medidor</p>
+        <h2 className={`mt-2 text-xl font-semibold tracking-tight ${darkMode ? "text-slate-100" : "text-slate-900"}`}>Concepto</h2>
+        <p className={`mt-2 text-sm leading-6 ${darkMode ? "text-slate-400" : "text-slate-600"}`}>Conteo total y porcentaje segun la columna <span className="font-semibold">Concepto</span>.</p>
+      </div>
+      <div className="space-y-3">
+        {data.length === 0 && <p className={`text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>No hay conceptos validos para mostrar.</p>}
+        {data.map((item) => (
+          <div key={item.label} className="space-y-1.5">
+            <div className="flex items-center justify-between gap-3">
+              <p className={`truncate text-sm font-medium ${darkMode ? "text-slate-200" : "text-slate-700"}`}>{item.label}</p>
+              <div className="flex items-center gap-3 text-right">
+                <span className={`text-sm font-semibold tabular-nums ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{item.count}</span>
+                <span className={`min-w-[4.5rem] text-xs font-semibold tabular-nums ${darkMode ? "text-amber-200" : "text-amber-700"}`}>{item.percentage.toFixed(2)}%</span>
+              </div>
+            </div>
+            <div className={`h-2.5 overflow-hidden rounded-full ${darkMode ? "bg-slate-800" : "bg-slate-200"}`}>
+              <div
+                className={`h-full rounded-full bg-gradient-to-r ${darkMode ? "from-amber-300 via-orange-400 to-yellow-500" : "from-amber-400 via-orange-500 to-yellow-500"}`}
+                style={{ width: `${Math.max((item.count / maxValue) * 100, 6)}%` }}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function MedidoresLiquidacionCard({
+  data,
+  darkMode
+}: {
+  data: { label: string; count: number; sum: number; pending_count: number }[];
+  darkMode: boolean;
+}) {
+  const totalRegistros = data.reduce((acc, item) => acc + Number(item.count || 0), 0);
+  const totalM3 = data.reduce((acc, item) => acc + Number(item.sum || 0), 0);
+
+  return (
+    <section className="card relative overflow-hidden p-6">
+      <div className={`absolute inset-x-6 top-0 h-px ${darkMode ? "bg-gradient-to-r from-transparent via-emerald-300/60 to-transparent" : "bg-gradient-to-r from-transparent via-emerald-500/60 to-transparent"}`} />
+      <div className="mb-5">
+        <div>
+          <p className={`text-[11px] font-semibold uppercase tracking-[0.28em] ${darkMode ? "text-emerald-200/70" : "text-emerald-800/70"}`}>Liquidacion</p>
+          <h2 className={`mt-2 text-xl font-semibold tracking-tight ${darkMode ? "text-slate-100" : "text-slate-900"}`}>Liquidación en m3</h2>
+          <p className={`mt-2 text-sm leading-6 ${darkMode ? "text-slate-400" : "text-slate-600"}`}>Suma el total de m3 de la columna <span className="font-semibold">Liquidación en m3</span> y lo distribuye por <span className="font-semibold">Concepto</span>.</p>
+        </div>
+      </div>
+      <div className="mb-5 grid gap-4 md:grid-cols-2">
+        <div className={`rounded-[22px] border p-4 ${darkMode ? "border-slate-700 bg-slate-900/60" : "border-slate-200 bg-slate-50/90"}`}>
+          <p className={`text-xs uppercase tracking-[0.18em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Registros con liquidacion</p>
+          <p className={`mt-2 text-3xl font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{totalRegistros}</p>
+        </div>
+        <div className={`rounded-[22px] border p-4 ${darkMode ? "border-emerald-900/50 bg-slate-900/60" : "border-emerald-100 bg-emerald-50/70"}`}>
+          <p className={`text-xs uppercase tracking-[0.18em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Total m3</p>
+          <p className={`mt-2 text-3xl font-bold ${darkMode ? "text-emerald-200" : "text-emerald-800"}`}>{totalM3.toLocaleString("es-CO", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}</p>
+        </div>
+      </div>
+      <div className="space-y-3">
+        {data.length === 0 && <p className={`text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>No hay valores de liquidación para mostrar.</p>}
+        {data.map((item) => (
+          <div key={item.label} className={`rounded-[18px] border px-4 py-3 ${darkMode ? "border-slate-800 bg-slate-900/40" : "border-slate-200 bg-slate-50/70"}`}>
+            <div className="flex items-center justify-between gap-3">
+              <p className={`truncate text-sm font-semibold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>{item.label}</p>
+              <div className="flex items-center gap-3">
+                <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${darkMode ? "bg-amber-950/60 text-amber-200" : "bg-amber-100 text-amber-800"}`}>
+                  {item.pending_count} pendientes
+                </span>
+                <p className={`text-sm font-semibold tabular-nums ${darkMode ? "text-emerald-200" : "text-emerald-700"}`}>{Number(item.sum).toLocaleString("es-CO", { minimumFractionDigits: 0, maximumFractionDigits: 2 })} m3</p>
+              </div>
+            </div>
+            <div className={`mt-1 flex items-center justify-between gap-3 text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+              <span>{item.count} registros con valor de liquidación</span>
+              <span>{item.pending_count} pendientes</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
