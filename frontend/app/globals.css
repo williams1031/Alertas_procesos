@@ -148,6 +148,295 @@ body {
   background: radial-gradient(circle, rgba(34, 211, 238, 0.18), transparent 70%);
 }
 
+.dashboard-shell {
+  min-width: 0;
+  border-color: rgba(51, 65, 85, 0.9);
+  background:
+    radial-gradient(circle at top left, rgba(34, 211, 238, 0.12), transparent 22%),
+    radial-gradient(circle at 92% 0%, rgba(129, 140, 248, 0.12), transparent 20%),
+    linear-gradient(180deg, rgba(8, 15, 31, 0.98), rgba(10, 18, 34, 0.98));
+  box-shadow:
+    0 42px 120px -56px rgba(2, 8, 23, 0.95),
+    inset 0 1px 0 rgba(148, 163, 184, 0.1);
+  padding-inline: 1rem;
+}
+
+.dashboard-shell-cases {
+  background:
+    radial-gradient(circle at 16% 10%, rgba(244, 114, 182, 0.1), transparent 18%),
+    radial-gradient(circle at 92% 2%, rgba(251, 191, 36, 0.08), transparent 16%),
+    linear-gradient(180deg, rgba(10, 14, 30, 0.985), rgba(11, 17, 34, 0.985));
+}
+
+.dashboard-sidebar {
+  position: relative;
+  min-width: 0;
+  flex-direction: column;
+  border-radius: 28px;
+  border: 1px solid rgba(51, 65, 85, 0.95);
+  background:
+    linear-gradient(180deg, rgba(8, 15, 31, 0.98), rgba(10, 18, 34, 0.98)),
+    linear-gradient(135deg, rgba(34, 211, 238, 0.08), rgba(129, 140, 248, 0.05));
+  padding: 1.35rem 1.05rem;
+  overflow: hidden;
+}
+
+.dashboard-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  min-width: 0;
+}
+
+.dashboard-brand-mark {
+  display: grid;
+  place-items: center;
+  width: 2.8rem;
+  height: 2.8rem;
+  border-radius: 0.95rem;
+  background: linear-gradient(135deg, rgba(34, 211, 238, 0.95), rgba(99, 102, 241, 0.8));
+  color: #020617;
+  font-weight: 700;
+  box-shadow: 0 18px 40px -18px rgba(34, 211, 238, 0.85);
+}
+
+.dashboard-brand-eyebrow {
+  color: rgba(148, 163, 184, 0.75);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+}
+
+.dashboard-brand-title {
+  color: #f8fafc;
+  font-size: 1.02rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.dashboard-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  border-radius: 1rem;
+  padding: 0.8rem 0.95rem;
+  color: rgba(203, 213, 225, 0.8);
+  background: rgba(15, 23, 42, 0.45);
+  border: 1px solid rgba(51, 65, 85, 0.72);
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.dashboard-nav-item-active {
+  color: #e0f2fe;
+  background: linear-gradient(90deg, rgba(34, 211, 238, 0.18), rgba(99, 102, 241, 0.14));
+  border-color: rgba(34, 211, 238, 0.4);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.dashboard-nav-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #22d3ee, #818cf8);
+  box-shadow: 0 0 0.9rem rgba(34, 211, 238, 0.5);
+}
+
+.dashboard-sidebar-glow {
+  margin-top: auto;
+  height: 9rem;
+  border-radius: 1.6rem;
+  background:
+    radial-gradient(circle at 30% 15%, rgba(34, 211, 238, 0.32), transparent 34%),
+    linear-gradient(180deg, rgba(15, 23, 42, 0.55), rgba(8, 15, 31, 0.2));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.dashboard-topbar,
+.dashboard-filterbar {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-width: 0;
+  border-radius: 1.7rem;
+  border: 1px solid rgba(51, 65, 85, 0.85);
+  background: linear-gradient(180deg, rgba(10, 18, 34, 0.96), rgba(12, 22, 40, 0.95));
+  padding: 1.35rem 1.45rem;
+  box-shadow: inset 0 1px 0 rgba(148, 163, 184, 0.06);
+}
+
+.dashboard-top-chip {
+  border-radius: 999px;
+  border: 1px solid rgba(51, 65, 85, 0.85);
+  background: rgba(15, 23, 42, 0.8);
+  color: #cbd5e1;
+  padding: 0.48rem 0.8rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.dashboard-metric {
+  position: relative;
+  overflow: hidden;
+  min-width: 0;
+  border-radius: 1.55rem;
+  border: 1px solid rgba(51, 65, 85, 0.8);
+  background: linear-gradient(180deg, rgba(10, 18, 34, 0.96), rgba(12, 22, 40, 0.95));
+  padding: 1.1rem 1.1rem 1.05rem;
+  box-shadow: inset 0 1px 0 rgba(148, 163, 184, 0.05);
+}
+
+.dashboard-metric-label {
+  color: rgba(148, 163, 184, 0.74);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+}
+
+.dashboard-metric-value {
+  margin-top: 0.55rem;
+  color: #f8fafc;
+  font-size: clamp(1.85rem, 2vw, 2.45rem);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  overflow-wrap: anywhere;
+}
+
+.dashboard-metric-detail {
+  margin-top: 0.35rem;
+  color: rgba(148, 163, 184, 0.75);
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+
+.dashboard-metric-compact {
+  padding: 0.95rem 1rem 0.9rem;
+}
+
+.dashboard-metric-compact .dashboard-metric-label {
+  font-size: 0.62rem;
+  letter-spacing: 0.24em;
+}
+
+.dashboard-metric-compact .dashboard-metric-value {
+  margin-top: 0.45rem;
+  font-size: clamp(1.45rem, 1.7vw, 1.95rem);
+}
+
+.dashboard-metric-compact .dashboard-metric-detail {
+  margin-top: 0.25rem;
+  font-size: 0.74rem;
+}
+
+.dashboard-metric-wave {
+  position: absolute;
+  right: -1rem;
+  bottom: -1.4rem;
+  width: 7.5rem;
+  height: 7.5rem;
+  border-radius: 999px;
+  filter: blur(8px);
+  opacity: 0.85;
+}
+
+.dashboard-metric-cyan .dashboard-metric-wave {
+  background: radial-gradient(circle, rgba(34, 211, 238, 0.28), transparent 70%);
+}
+
+.dashboard-metric-violet .dashboard-metric-wave {
+  background: radial-gradient(circle, rgba(129, 140, 248, 0.28), transparent 70%);
+}
+
+.dashboard-metric-amber .dashboard-metric-wave {
+  background: radial-gradient(circle, rgba(251, 191, 36, 0.28), transparent 70%);
+}
+
+.dashboard-metric-emerald .dashboard-metric-wave {
+  background: radial-gradient(circle, rgba(16, 185, 129, 0.28), transparent 70%);
+}
+
+.dashboard-metric-rose .dashboard-metric-wave {
+  background: radial-gradient(circle, rgba(244, 63, 94, 0.28), transparent 70%);
+}
+
+.dashboard-metric-fuchsia .dashboard-metric-wave {
+  background: radial-gradient(circle, rgba(217, 70, 239, 0.28), transparent 70%);
+}
+
+.dashboard-panel {
+  min-width: 0;
+}
+
+.dashboard-panel .card {
+  height: 100%;
+  overflow: hidden;
+  border-color: rgba(51, 65, 85, 0.84);
+  background: linear-gradient(180deg, rgba(10, 18, 34, 0.97), rgba(12, 22, 40, 0.95));
+  box-shadow:
+    0 24px 60px -42px rgba(2, 8, 23, 0.92),
+    inset 0 1px 0 rgba(148, 163, 184, 0.05);
+}
+
+.dashboard-table-card thead {
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.98), rgba(17, 24, 39, 0.92));
+}
+
+.dashboard-table-card th {
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.dashboard-table-card td {
+  line-height: 1.45;
+}
+
+.dashboard-select {
+  width: 100%;
+  min-width: 0;
+  border-radius: 1rem;
+  border: 1px solid rgba(51, 65, 85, 0.9);
+  background: rgba(15, 23, 42, 0.8);
+  color: #f8fafc;
+  padding: 0.72rem 0.9rem;
+  font-size: 0.92rem;
+}
+
+.dashboard-select:focus {
+  outline: none;
+  border-color: rgba(34, 211, 238, 0.45);
+  box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.08);
+}
+
+@media (min-width: 1024px) {
+  .dashboard-topbar,
+  .dashboard-filterbar {
+    flex-direction: row;
+    align-items: flex-end;
+    justify-content: space-between;
+  }
+
+  .dashboard-topbar > *,
+  .dashboard-filterbar > * {
+    min-width: 0;
+  }
+}
+
+@media (max-width: 1535px) {
+  .dashboard-brand-title {
+    font-size: 0.96rem;
+  }
+
+  .dashboard-nav-item {
+    padding: 0.72rem 0.82rem;
+    font-size: 0.85rem;
+  }
+}
+
 .capture-mode .panel-grid::before,
 .capture-mode .metric-card::after,
 .capture-mode .app-orbs::before,

@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import { toBlob } from "html-to-image";
-import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
 type ControlRecord = {
   Responsable: string;
@@ -601,7 +601,8 @@ function MiniBarChart({
   filterValue,
   onFilterChange,
   filterOptions,
-  filterLabel = "Filtro"
+  filterLabel = "Filtro",
+  allowWrapLabels = false
 }: {
   title: string;
   data: ChartPoint[];
@@ -610,6 +611,7 @@ function MiniBarChart({
   onFilterChange?: (value: string) => void;
   filterOptions?: string[];
   filterLabel?: string;
+  allowWrapLabels?: boolean;
 }) {
   const COLLAPSED_LIMIT = 12;
   const [expanded, setExpanded] = useState(false);
@@ -665,7 +667,7 @@ function MiniBarChart({
         {visibleData.map((item) => (
           <div key={`${title}-${item.label}`} className="space-y-1.5">
             <div className="flex items-center justify-between text-xs">
-              <span className={`truncate pr-2 ${darkMode ? "text-slate-300" : "text-slate-700"}`}>{item.label}</span>
+              <span className={`${allowWrapLabels ? "line-clamp-2 whitespace-normal break-words" : "truncate"} pr-2 ${darkMode ? "text-slate-300" : "text-slate-700"}`}>{item.label}</span>
               <span className={`font-semibold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{item.count}</span>
             </div>
             <div className={`h-2.5 rounded-full ${darkMode ? "bg-slate-800" : "bg-slate-200"}`}>
@@ -1555,28 +1557,38 @@ export default function HomePage() {
       )}
 
       {data && isMedidoresMode && (
-        <section className="mb-8 grid gap-4 md:grid-cols-5">
-          <div className={`metric-card reveal-up reveal-delay-1 rounded-[26px] border p-5 ${darkMode ? "border-cyan-950/40 bg-slate-900/60" : "border-cyan-100 bg-white/90"}`}>
-            <p className={`text-xs uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Hoja usada</p>
-            <p className={`mt-2 text-2xl font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{data.sheet_used}</p>
+        <DashboardShell
+          title="Analizador de medidores"
+          eyebrow="Modulo especializado"
+          description="Vista compacta para revisar retiros, conceptos, liquidación en m3 y pendientes críticos con una lectura más ejecutiva."
+          navItems={["Dashboard", "Retiros", "Conceptos", "Liquidación", "Pendientes"]}
+          darkMode={darkMode}
+        >
+          <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-5">
+            <DashboardMetricCard label="Hoja usada" value={data.sheet_used} accent="cyan" detail="Fuente activa" />
+            <DashboardMetricCard label="Filas leídas" value={data.source_total_rows} accent="violet" detail="Registros detectados" />
+            <DashboardMetricCard label="Retiros contabilizados" value={medidoresTotal} accent="emerald" detail="Columna Retirado por" />
+            <DashboardMetricCard label="Pendientes por concepto" value={medidoresPendientes.length} accent="amber" detail="Concepto = Pendiente" />
+            <DashboardMetricCard label="Pendientes por liquidar" value={medidoresPendientesLiquidar} accent="rose" detail="Liquidación en m3 = Pendiente" />
+          </section>
+
+          <section className="grid gap-5 xl:grid-cols-2 2xl:grid-cols-[1.05fr_1.05fr_1.2fr]">
+            <div className="dashboard-panel"><MedidoresRetiradoChart data={medidoresRetiradoPor} darkMode={true} /></div>
+            <div className="dashboard-panel"><MedidoresConceptoChart data={medidoresConcepto} darkMode={true} /></div>
+            <div className="dashboard-panel"><MedidoresLiquidacionCard data={medidoresLiquidacionM3} darkMode={true} /></div>
+          </section>
+
+          <div className="dashboard-panel">
+            <DataTableCard
+              title="Cuentas contrato con concepto Pendiente"
+              rows={medidoresPendientes}
+              darkMode={true}
+              actionLabel="Descargar pendientes"
+              onAction={downloadMedidoresPendientes}
+              actionLoading={exportingReport}
+            />
           </div>
-          <div className={`metric-card reveal-up reveal-delay-2 rounded-[26px] border p-5 ${darkMode ? "border-sky-950/40 bg-slate-900/60" : "border-sky-100 bg-white/90"}`}>
-            <p className={`text-xs uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Filas leidas</p>
-            <p className={`mt-2 text-2xl font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{data.source_total_rows}</p>
-          </div>
-          <div className={`metric-card reveal-up reveal-delay-3 rounded-[26px] border p-5 ${darkMode ? "border-emerald-950/40 bg-slate-900/60" : "border-emerald-100 bg-white/90"}`}>
-            <p className={`text-xs uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Retiros contabilizados</p>
-            <p className={`mt-2 text-2xl font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{medidoresTotal}</p>
-          </div>
-          <div className={`metric-card reveal-up reveal-delay-4 rounded-[26px] border p-5 ${darkMode ? "border-amber-950/40 bg-slate-900/60" : "border-amber-100 bg-white/90"}`}>
-            <p className={`text-xs uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Pendientes por concepto</p>
-            <p className={`mt-2 text-2xl font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{medidoresPendientes.length}</p>
-          </div>
-          <div className={`metric-card reveal-up reveal-delay-5 rounded-[26px] border p-5 ${darkMode ? "border-rose-950/40 bg-slate-900/60" : "border-rose-100 bg-white/90"}`}>
-            <p className={`text-xs uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Pendientes por liquidar</p>
-            <p className={`mt-2 text-2xl font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{medidoresPendientesLiquidar}</p>
-          </div>
-        </section>
+        </DashboardShell>
       )}
 
       {data && !isMedidoresMode && !isCasosEspecialesMode && (
@@ -1682,140 +1694,79 @@ export default function HomePage() {
         </div>
       )}
 
-      {data && isMedidoresMode && (
-        <section className="mb-8 grid gap-6 xl:grid-cols-3">
-          <div className="reveal-up reveal-delay-2">
-            <MedidoresRetiradoChart data={medidoresRetiradoPor} darkMode={darkMode} />
-          </div>
-          <div className="reveal-up reveal-delay-3">
-            <MedidoresConceptoChart data={medidoresConcepto} darkMode={darkMode} />
-          </div>
-          <div className="reveal-up reveal-delay-4">
-            <MedidoresLiquidacionCard
-              data={medidoresLiquidacionM3}
-              darkMode={darkMode}
-            />
-          </div>
-        </section>
-      )}
-
-      {data && isMedidoresMode && (
-        <div className="reveal-up reveal-delay-5 mb-8">
-          <DataTableCard
-            title="Cuentas contrato con concepto Pendiente"
-            rows={medidoresPendientes}
-            darkMode={darkMode}
-            actionLabel="Descargar pendientes"
-            onAction={downloadMedidoresPendientes}
-            actionLoading={exportingReport}
-          />
-        </div>
-      )}
-
       {data && isCasosEspecialesMode && (
-        <section className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-6">
-          <div className={`metric-card reveal-up reveal-delay-1 rounded-[26px] border p-5 ${darkMode ? "border-cyan-950/40 bg-slate-900/60" : "border-cyan-100 bg-white/90"}`}>
-            <p className={`text-xs uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Hoja usada</p>
-            <p className={`mt-2 text-2xl font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{data.sheet_used}</p>
-          </div>
-          <div className={`metric-card reveal-up reveal-delay-2 rounded-[26px] border p-5 ${darkMode ? "border-sky-950/40 bg-slate-900/60" : "border-sky-100 bg-white/90"}`}>
-            <p className={`text-xs uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Casos visibles</p>
-            <p className={`mt-2 text-2xl font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{filteredCasosRecords.length}</p>
-          </div>
-          <div className={`metric-card reveal-up reveal-delay-3 rounded-[26px] border p-5 ${darkMode ? "border-emerald-950/40 bg-slate-900/60" : "border-emerald-100 bg-white/90"}`}>
-            <p className={`text-xs uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Cuentas únicas</p>
-            <p className={`mt-2 text-2xl font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{new Set(filteredCasosRecords.map((row) => row["Cuenta contrato"]).filter(Boolean)).size}</p>
-          </div>
-          <div className={`metric-card reveal-up reveal-delay-4 rounded-[26px] border p-5 ${darkMode ? "border-amber-950/40 bg-slate-900/60" : "border-amber-100 bg-white/90"}`}>
-            <p className={`text-xs uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Seguimientos visibles</p>
-            <p className={`mt-2 text-2xl font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{filteredCasosSeguimientos.length}</p>
-          </div>
-          <div className={`metric-card reveal-up reveal-delay-5 rounded-[26px] border p-5 ${darkMode ? "border-rose-950/40 bg-slate-900/60" : "border-rose-100 bg-white/90"}`}>
-            <p className={`text-xs uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Casos con seguimiento</p>
-            <p className={`mt-2 text-2xl font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{filteredCasosRecords.filter((row) => row.Tiene_seguimiento === "Si").length}</p>
-          </div>
-          <div className={`metric-card reveal-up reveal-delay-5 rounded-[26px] border p-5 ${darkMode ? "border-fuchsia-950/40 bg-slate-900/60" : "border-fuchsia-100 bg-white/90"}`}>
-            <p className={`text-xs uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Reprogramados</p>
-            <p className={`mt-2 text-2xl font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{filteredCasosRecords.filter((row) => normalizeForSearch(row.Ultima_observacion).includes("reprogramar")).length}</p>
-          </div>
-        </section>
-      )}
+        <DashboardShell
+          title="Analizador de casos especiales"
+          eyebrow="Centro de seguimiento"
+          description="Vista de vigilancia territorial con filtros, distribución de hallazgos, profundidad de seguimiento y mesas de priorización para revisión operativa."
+          navItems={["Dashboard", "Hallazgos", "Territorio", "Seguimientos", "Criticos"]}
+          darkMode={darkMode}
+          variant="cases"
+        >
+          <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
+            <DashboardMetricCard label="Hoja usada" value={data.sheet_used} accent="cyan" detail="Fuente activa" compact />
+            <DashboardMetricCard label="Casos visibles" value={filteredCasosRecords.length} accent="violet" detail="Tras aplicar filtros" compact />
+            <DashboardMetricCard label="Cuentas únicas" value={new Set(filteredCasosRecords.map((row) => row["Cuenta contrato"]).filter(Boolean)).size} accent="emerald" detail="Contratos distintos" compact />
+            <DashboardMetricCard label="Seguimientos visibles" value={filteredCasosSeguimientos.length} accent="amber" detail="Filas del bloque seguimiento" compact />
+            <DashboardMetricCard label="Casos con seguimiento" value={filteredCasosRecords.filter((row) => row.Tiene_seguimiento === "Si").length} accent="rose" detail="Con trazabilidad" compact />
+            <DashboardMetricCard label="Reprogramados" value={filteredCasosRecords.filter((row) => normalizeForSearch(row.Ultima_observacion).includes("reprogramar")).length} accent="fuchsia" detail="Última observación" compact />
+          </section>
 
-      {data && isCasosEspecialesMode && (
-        <section className="card panel-grid reveal-up reveal-delay-2 relative z-20 mb-8 overflow-visible p-6 sm:p-7">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <section className="dashboard-filterbar">
             <div>
-              <p className={`text-[11px] font-semibold uppercase tracking-[0.28em] ${darkMode ? "text-cyan-200/70" : "text-cyan-800/70"}`}>Exploración operativa</p>
-              <h2 className={`mt-2 text-xl font-semibold tracking-tight ${darkMode ? "text-slate-100" : "text-slate-900"}`}>Filtros de casos especiales</h2>
-              <p className={`mt-2 max-w-3xl text-sm leading-6 ${darkMode ? "text-slate-400" : "text-slate-600"}`}>Cruza hallazgos, territorio y resultados de seguimiento para identificar focos, reincidencias y casos que siguen abiertos o reprogamados.</p>
+              <p className="dashboard-brand-eyebrow">Exploración operativa</p>
+              <h3 className="mt-2 text-lg font-semibold text-slate-100">Filtros de casos especiales</h3>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">
+                Cruza hallazgos, territorio y resultados para identificar focos, reincidencias y casos que siguen abiertos o reprogramados.
+              </p>
             </div>
             <div className="grid w-full gap-3 md:grid-cols-2 xl:grid-cols-4">
-              <select value={casosZonaFilter} onChange={(e) => setCasosZonaFilter(e.target.value)} className={`block w-full rounded-xl border px-3 py-2 text-sm ${darkMode ? "border-slate-700 bg-slate-900/70 text-slate-100" : "border-slate-300 text-slate-800"}`}>
+              <select value={casosZonaFilter} onChange={(e) => setCasosZonaFilter(e.target.value)} className="dashboard-select">
                 <option>Todos</option>
                 {casosEspecialesFilterOptions.zona.map((option) => <option key={option} value={option}>{option}</option>)}
               </select>
-              <select value={casosLocalidadFilter} onChange={(e) => setCasosLocalidadFilter(e.target.value)} className={`block w-full rounded-xl border px-3 py-2 text-sm ${darkMode ? "border-slate-700 bg-slate-900/70 text-slate-100" : "border-slate-300 text-slate-800"}`}>
+              <select value={casosLocalidadFilter} onChange={(e) => setCasosLocalidadFilter(e.target.value)} className="dashboard-select">
                 <option>Todos</option>
                 {casosEspecialesFilterOptions.localidad.map((option) => <option key={option} value={option}>{option}</option>)}
               </select>
-              <select value={casosHallazgoFilter} onChange={(e) => setCasosHallazgoFilter(e.target.value)} className={`block w-full rounded-xl border px-3 py-2 text-sm ${darkMode ? "border-slate-700 bg-slate-900/70 text-slate-100" : "border-slate-300 text-slate-800"}`}>
+              <select value={casosHallazgoFilter} onChange={(e) => setCasosHallazgoFilter(e.target.value)} className="dashboard-select">
                 <option>Todos</option>
                 {casosEspecialesFilterOptions.hallazgo.map((option) => <option key={option} value={option}>{option}</option>)}
               </select>
-              <select value={casosResultadoFilter} onChange={(e) => setCasosResultadoFilter(e.target.value)} className={`block w-full rounded-xl border px-3 py-2 text-sm ${darkMode ? "border-slate-700 bg-slate-900/70 text-slate-100" : "border-slate-300 text-slate-800"}`}>
+              <select value={casosResultadoFilter} onChange={(e) => setCasosResultadoFilter(e.target.value)} className="dashboard-select">
                 <option>Todos</option>
                 {casosEspecialesFilterOptions.resultado.map((option) => <option key={option} value={option}>{option}</option>)}
               </select>
             </div>
+          </section>
+
+          <section className="grid gap-5 xl:grid-cols-2">
+            <div className="dashboard-panel"><MiniBarChart title="Hallazgos" data={casosHallazgoChart} darkMode={true} allowWrapLabels /></div>
+            <div className="dashboard-panel"><MiniBarChart title="Localidades" data={casosLocalidadChart} darkMode={true} allowWrapLabels /></div>
+            <div className="dashboard-panel"><MiniBarChart title="Resultados" data={casosResultadoChart} darkMode={true} allowWrapLabels /></div>
+            <div className="dashboard-panel"><ObservationChart title="Observaciones" data={casosObservacionChart} darkMode={true} activeEstatus="" allowWrapLabels /></div>
+          </section>
+
+          <section className="grid gap-5 xl:grid-cols-2">
+            <div className="dashboard-panel"><MiniBarChart title="Barrios" data={casosBarrioChart} darkMode={true} allowWrapLabels /></div>
+            <div className="dashboard-panel"><MiniBarChart title="Intervenciones" data={casosIntervencionChart} darkMode={true} allowWrapLabels /></div>
+            <div className="dashboard-panel"><MiniBarChart title="Profundidad seguimiento" data={casosSeguimientoDepthChart} darkMode={true} allowWrapLabels /></div>
+            <div className="dashboard-panel"><MiniBarChart title="Estado operativo" data={casosEstadoOperativoChart} darkMode={true} allowWrapLabels /></div>
+          </section>
+
+          <div className="dashboard-panel">
+            <DataTableCard title="Resumen ejecutivo de casos especiales" rows={casosResumenRows} darkMode={true} wrapCells variant="executive" />
           </div>
-        </section>
-      )}
 
-      {data && isCasosEspecialesMode && (
-        <section className="mb-8 grid gap-6 xl:grid-cols-2 2xl:grid-cols-4">
-          <div className="reveal-up reveal-delay-2"><MiniBarChart title="Hallazgos" data={casosHallazgoChart} darkMode={darkMode} /></div>
-          <div className="reveal-up reveal-delay-3"><MiniBarChart title="Localidades" data={casosLocalidadChart} darkMode={darkMode} /></div>
-          <div className="reveal-up reveal-delay-4"><MiniBarChart title="Resultados" data={casosResultadoChart} darkMode={darkMode} /></div>
-          <div className="reveal-up reveal-delay-5"><ObservationChart title="Observaciones" data={casosObservacionChart} darkMode={darkMode} activeEstatus="" /></div>
-        </section>
-      )}
-
-      {data && isCasosEspecialesMode && (
-        <section className="mb-8 grid gap-6 xl:grid-cols-2 2xl:grid-cols-4">
-          <div className="reveal-up reveal-delay-2"><MiniBarChart title="Barrios" data={casosBarrioChart} darkMode={darkMode} /></div>
-          <div className="reveal-up reveal-delay-3"><MiniBarChart title="Intervenciones" data={casosIntervencionChart} darkMode={darkMode} /></div>
-          <div className="reveal-up reveal-delay-4"><MiniBarChart title="Profundidad seguimiento" data={casosSeguimientoDepthChart} darkMode={darkMode} /></div>
-          <div className="reveal-up reveal-delay-5"><MiniBarChart title="Estado operativo" data={casosEstadoOperativoChart} darkMode={darkMode} /></div>
-        </section>
-      )}
-
-      {data && isCasosEspecialesMode && (
-        <div className="reveal-up reveal-delay-5 mb-8">
-          <DataTableCard
-            title="Resumen ejecutivo de casos especiales"
-            rows={casosResumenRows}
-            darkMode={darkMode}
-          />
-        </div>
-      )}
-
-      {data && isCasosEspecialesMode && (
-        <section className="mb-8 grid gap-6 xl:grid-cols-2">
-          <div className="reveal-up reveal-delay-5">
-            <DataTableCard
-              title="Reincidencias y seguimientos recurrentes"
-              rows={casosReincidenciaRows}
-              darkMode={darkMode}
-            />
-          </div>
-          <div className="reveal-up reveal-delay-5">
-            <DataTableCard
-              title="Casos críticos y observaciones sensibles"
-              rows={casosCriticosRows}
-              darkMode={darkMode}
-            />
-          </div>
-        </section>
+          <section className="grid gap-5 xl:grid-cols-2">
+            <div className="dashboard-panel">
+              <DataTableCard title="Reincidencias y seguimientos recurrentes" rows={casosReincidenciaRows} darkMode={true} wrapCells variant="executive" />
+            </div>
+            <div className="dashboard-panel">
+              <DataTableCard title="Casos críticos y observaciones sensibles" rows={casosCriticosRows} darkMode={true} wrapCells variant="executive" />
+            </div>
+          </section>
+        </DashboardShell>
       )}
 
     </main>
@@ -1828,7 +1779,9 @@ function DataTableCard({
   darkMode,
   actionLabel,
   onAction,
-  actionLoading = false
+  actionLoading = false,
+  wrapCells = false,
+  variant = "default"
 }: {
   title: string;
   rows: Record<string, string | number | null>[];
@@ -1836,6 +1789,8 @@ function DataTableCard({
   actionLabel?: string;
   onAction?: () => void;
   actionLoading?: boolean;
+  wrapCells?: boolean;
+  variant?: "default" | "executive";
 }) {
   const COLLAPSED_LIMIT = 12;
   const [expanded, setExpanded] = useState(false);
@@ -1844,7 +1799,7 @@ function DataTableCard({
   }, [rows]);
   if (!rows.length) {
     return (
-      <section className="card p-6">
+      <section className={`card overflow-hidden p-6 ${variant === "executive" ? "dashboard-table-card" : ""}`}>
         <div className="flex items-center justify-between gap-3">
           <h2 className={`text-lg font-semibold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{title}</h2>
           {onAction && actionLabel && (
@@ -1867,7 +1822,7 @@ function DataTableCard({
   const visibleRows = expanded ? rows : rows.slice(0, COLLAPSED_LIMIT);
   const canExpand = rows.length > COLLAPSED_LIMIT;
   return (
-    <section className="card p-6">
+    <section className={`card overflow-hidden p-6 ${variant === "executive" ? "dashboard-table-card" : ""}`}>
       <div className="flex items-center justify-between gap-3">
         <h2 className={`text-lg font-semibold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{title}</h2>
         {onAction && actionLabel && (
@@ -1886,7 +1841,7 @@ function DataTableCard({
           <thead className={darkMode ? "bg-slate-900/80" : "bg-brand-50"}>
             <tr>
               {headers.map((header) => (
-                <th key={header} className={`whitespace-nowrap px-3 py-2 text-left font-semibold ${darkMode ? "text-brand-200" : "text-brand-900"}`}>
+                <th key={header} className={`${wrapCells ? "whitespace-normal" : "whitespace-nowrap"} px-3 py-2 text-left font-semibold align-top ${darkMode ? "text-brand-200" : "text-brand-900"}`}>
                   {header}
                 </th>
               ))}
@@ -1896,7 +1851,7 @@ function DataTableCard({
             {visibleRows.map((row, index) => (
               <tr key={index} className={`${darkMode ? "border-slate-800/90 odd:bg-slate-900/40 even:bg-slate-900/70" : "border-slate-100 odd:bg-white even:bg-slate-50/50"} border-t`}>
                 {headers.map((header) => (
-                  <td key={header} className={`whitespace-nowrap px-3 py-2 ${darkMode ? "text-slate-200" : "text-slate-700"}`}>
+                  <td key={header} className={`${wrapCells ? "max-w-[16rem] whitespace-normal break-words" : "whitespace-nowrap"} px-3 py-2 align-top ${darkMode ? "text-slate-200" : "text-slate-700"}`}>
                     {row[header] ?? "-"}
                   </td>
                 ))}
@@ -1920,16 +1875,113 @@ function DataTableCard({
   );
 }
 
+function DashboardShell({
+  title,
+  eyebrow,
+  description,
+  navItems,
+  darkMode,
+  children,
+  variant = "default"
+}: {
+  title: string;
+  eyebrow: string;
+  description: string;
+  navItems: string[];
+  darkMode: boolean;
+  children: ReactNode;
+  variant?: "default" | "cases";
+}) {
+  const shellDark = true;
+
+  return (
+    <section className={`dashboard-shell ${variant === "cases" ? "dashboard-shell-cases" : ""} reveal-up reveal-delay-2 relative mb-10 overflow-hidden rounded-[34px] border p-4 sm:p-5`}>
+      <div className="grid gap-5 xl:grid-cols-[248px_minmax(0,1fr)] 2xl:grid-cols-[264px_minmax(0,1fr)]">
+        <aside className="dashboard-sidebar hidden xl:flex">
+          <div className="dashboard-brand">
+            <div className="dashboard-brand-mark">A</div>
+            <div>
+              <p className="dashboard-brand-eyebrow">{eyebrow}</p>
+              <h3 className="dashboard-brand-title">{title}</h3>
+            </div>
+          </div>
+          <nav className="mt-8 space-y-2">
+            {navItems.map((item, index) => (
+              <div
+                key={item}
+                className={`dashboard-nav-item ${index === 0 ? "dashboard-nav-item-active" : ""}`}
+              >
+                <span className="dashboard-nav-dot" />
+                {item}
+              </div>
+            ))}
+          </nav>
+          <div className="dashboard-sidebar-glow" />
+        </aside>
+
+        <div className="min-w-0 space-y-5">
+          <header className="dashboard-topbar">
+            <div>
+              <p className="dashboard-brand-eyebrow">{eyebrow}</p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-50">{title}</h2>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">{description}</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="dashboard-top-chip">Vista operativa</div>
+              <div className="dashboard-top-chip">{darkMode ? "Tema oscuro" : "Tema claro"}</div>
+            </div>
+          </header>
+          {children}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function DashboardMetricCard({
+  label,
+  value,
+  accent = "cyan",
+  detail,
+  compact = false
+}: {
+  label: string;
+  value: string | number;
+  accent?: "cyan" | "violet" | "amber" | "emerald" | "rose" | "fuchsia";
+  detail?: string;
+  compact?: boolean;
+}) {
+  const accentClass = {
+    cyan: "dashboard-metric-cyan",
+    violet: "dashboard-metric-violet",
+    amber: "dashboard-metric-amber",
+    emerald: "dashboard-metric-emerald",
+    rose: "dashboard-metric-rose",
+    fuchsia: "dashboard-metric-fuchsia"
+  }[accent];
+
+  return (
+    <article className={`dashboard-metric ${compact ? "dashboard-metric-compact" : ""} ${accentClass}`}>
+      <p className="dashboard-metric-label">{label}</p>
+      <p className="dashboard-metric-value">{value}</p>
+      {detail && <p className="dashboard-metric-detail">{detail}</p>}
+      <div className="dashboard-metric-wave" />
+    </article>
+  );
+}
+
 function ObservationChart({
   title,
   data,
   darkMode,
-  activeEstatus
+  activeEstatus,
+  allowWrapLabels = false
 }: {
   title: string;
   data: ChartPoint[];
   darkMode: boolean;
   activeEstatus: string;
+  allowWrapLabels?: boolean;
 }) {
   const COLLAPSED_LIMIT = 12;
   const [expanded, setExpanded] = useState(false);
@@ -1955,7 +2007,7 @@ function ObservationChart({
         {visibleData.map((item) => (
           <div key={`${title}-${item.label}`} className="space-y-1.5">
             <div className="flex items-center justify-between text-xs">
-              <span className={`truncate pr-2 ${darkMode ? "text-slate-300" : "text-slate-700"}`}>{item.label}</span>
+              <span className={`${allowWrapLabels ? "line-clamp-2 whitespace-normal break-words" : "truncate"} pr-2 ${darkMode ? "text-slate-300" : "text-slate-700"}`}>{item.label}</span>
               <span className={`font-semibold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{item.count}</span>
             </div>
             <div className={`h-2.5 rounded-full ${darkMode ? "bg-slate-800" : "bg-slate-200"}`}>
@@ -2080,32 +2132,42 @@ function MedidoresLiquidacionCard({
           <p className={`mt-2 text-sm leading-6 ${darkMode ? "text-slate-400" : "text-slate-600"}`}>Suma el total de m3 de la columna <span className="font-semibold">Liquidación en m3</span> y lo distribuye por <span className="font-semibold">Concepto</span>.</p>
         </div>
       </div>
-      <div className="mb-5 grid gap-4 md:grid-cols-2">
-        <div className={`rounded-[22px] border p-4 ${darkMode ? "border-slate-700 bg-slate-900/60" : "border-slate-200 bg-slate-50/90"}`}>
+      <div className={`mb-5 space-y-4 rounded-[24px] border p-4 ${darkMode ? "border-slate-700 bg-slate-900/60" : "border-slate-200 bg-slate-50/90"}`}>
+        <div className={`rounded-[22px] border px-5 py-5 ${darkMode ? "border-emerald-900/50 bg-slate-950/60" : "border-emerald-100 bg-white/90"}`}>
+          <p className={`text-xs uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Total m3</p>
+          <p className={`mt-3 whitespace-nowrap text-[clamp(1.7rem,2.2vw,2.35rem)] font-bold leading-none tracking-[-0.04em] ${darkMode ? "text-emerald-200" : "text-emerald-800"}`}>
+            {totalM3.toLocaleString("es-CO", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+          </p>
+        </div>
+        <div className={`rounded-[20px] border px-4 py-4 ${darkMode ? "border-slate-800 bg-slate-950/50" : "border-slate-200 bg-white/85"}`}>
           <p className={`text-xs uppercase tracking-[0.18em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Registros con liquidacion</p>
           <p className={`mt-2 text-3xl font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{totalRegistros}</p>
-        </div>
-        <div className={`rounded-[22px] border p-4 ${darkMode ? "border-emerald-900/50 bg-slate-900/60" : "border-emerald-100 bg-emerald-50/70"}`}>
-          <p className={`text-xs uppercase tracking-[0.18em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Total m3</p>
-          <p className={`mt-2 text-3xl font-bold ${darkMode ? "text-emerald-200" : "text-emerald-800"}`}>{totalM3.toLocaleString("es-CO", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}</p>
         </div>
       </div>
       <div className="space-y-3">
         {data.length === 0 && <p className={`text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>No hay valores de liquidación para mostrar.</p>}
         {data.map((item) => (
-          <div key={item.label} className={`rounded-[18px] border px-4 py-3 ${darkMode ? "border-slate-800 bg-slate-900/40" : "border-slate-200 bg-slate-50/70"}`}>
-            <div className="flex items-center justify-between gap-3">
-              <p className={`truncate text-sm font-semibold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>{item.label}</p>
-              <div className="flex items-center gap-3">
-                <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${darkMode ? "bg-amber-950/60 text-amber-200" : "bg-amber-100 text-amber-800"}`}>
-                  {item.pending_count} pendientes
-                </span>
-                <p className={`text-sm font-semibold tabular-nums ${darkMode ? "text-emerald-200" : "text-emerald-700"}`}>{Number(item.sum).toLocaleString("es-CO", { minimumFractionDigits: 0, maximumFractionDigits: 2 })} m3</p>
+          <div key={item.label} className={`rounded-[18px] border p-4 ${darkMode ? "border-slate-800 bg-slate-900/40" : "border-slate-200 bg-slate-50/70"}`}>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className={`truncate text-sm font-semibold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>{item.label}</p>
+                <p className={`mt-1 text-xs ${darkMode ? "text-slate-500" : "text-slate-500"}`}>{item.count} registros con valor de liquidación</p>
               </div>
+              <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${darkMode ? "bg-amber-950/60 text-amber-200" : "bg-amber-100 text-amber-800"}`}>
+                {item.pending_count} pendientes
+              </span>
             </div>
-            <div className={`mt-1 flex items-center justify-between gap-3 text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
-              <span>{item.count} registros con valor de liquidación</span>
-              <span>{item.pending_count} pendientes</span>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div className={`rounded-2xl border px-3 py-3 ${darkMode ? "border-slate-800 bg-slate-950/55" : "border-slate-200 bg-white/80"}`}>
+                <p className={`text-[11px] uppercase tracking-[0.18em] ${darkMode ? "text-slate-500" : "text-slate-500"}`}>Total m3</p>
+                <p className={`mt-2 whitespace-nowrap text-[clamp(1rem,1.2vw,1.25rem)] font-bold leading-tight tracking-[-0.03em] ${darkMode ? "text-emerald-200" : "text-emerald-700"}`}>
+                  {Number(item.sum).toLocaleString("es-CO", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+                </p>
+              </div>
+              <div className={`rounded-2xl border px-3 py-3 ${darkMode ? "border-slate-800 bg-slate-950/55" : "border-slate-200 bg-white/80"}`}>
+                <p className={`text-[11px] uppercase tracking-[0.18em] ${darkMode ? "text-slate-500" : "text-slate-500"}`}>Pendientes</p>
+                <p className={`mt-2 text-xl font-bold leading-tight ${darkMode ? "text-amber-200" : "text-amber-700"}`}>{item.pending_count}</p>
+              </div>
             </div>
           </div>
         ))}
