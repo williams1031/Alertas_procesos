@@ -66,6 +66,40 @@ type PreviewResponse = {
     pending_count: number;
   }[];
   medidores_pendientes_liquidar: number;
+  casos_especiales_records: {
+    "N°": string;
+    "Intervención": string;
+    Zona: string;
+    "Porción": string;
+    "Dirección": string;
+    Localidad: string;
+    Barrio: string;
+    "Cuenta contrato": string;
+    "Hallazgo encontrado": string;
+    Interlocutor: string;
+    Equipo: string;
+    Total_seguimientos: number;
+    Ultimo_resultado: string;
+    Ultima_observacion: string;
+    Tiene_seguimiento: string;
+  }[];
+  casos_especiales_seguimientos: {
+    Zona: string;
+    Localidad: string;
+    Barrio: string;
+    "Hallazgo encontrado": string;
+    "Intervención": string;
+    "Cuenta contrato": string;
+    Resultado: string;
+    "Observación": string;
+  }[];
+  casos_especiales_filter_options: {
+    zona: string[];
+    localidad: string[];
+    barrio: string[];
+    hallazgo: string[];
+    resultado: string[];
+  };
 };
 
 type SharepointDiagnosticResponse = {
@@ -117,7 +151,7 @@ type ChartPoint = {
   count: number;
 };
 
-type BaseMode = "administrativa" | "medidores";
+type BaseMode = "administrativa" | "medidores" | "casos_especiales";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const DEFAULT_ADMIN_ESTATUS = [
@@ -131,7 +165,8 @@ const DEFAULT_PENAL_ESTATUS = [
 ];
 const DEFAULT_SHEET_BY_MODE: Record<BaseMode, string> = {
   administrativa: "Procesos Adminis_Penal",
-  medidores: "Acueducto"
+  medidores: "Acueducto",
+  casos_especiales: "3. Visitas seguimiento"
 };
 
 function normalizeForSearch(value: string | number | null | undefined) {
@@ -739,6 +774,10 @@ export default function HomePage() {
   const [filterEstado, setFilterEstado] = useState<string[]>([]);
   const [estatusPanelFilter, setEstatusPanelFilter] = useState("");
   const [exportingReport, setExportingReport] = useState(false);
+  const [casosZonaFilter, setCasosZonaFilter] = useState("Todos");
+  const [casosLocalidadFilter, setCasosLocalidadFilter] = useState("Todos");
+  const [casosHallazgoFilter, setCasosHallazgoFilter] = useState("Todos");
+  const [casosResultadoFilter, setCasosResultadoFilter] = useState("Todos");
 
   useEffect(() => {
     const enabled = window.localStorage.getItem("dark_mode") === "1";
@@ -756,6 +795,13 @@ export default function HomePage() {
     setFilterEstado([]);
     setEstatusPanelFilter("");
   }, [data]);
+
+  useEffect(() => {
+    setCasosZonaFilter("Todos");
+    setCasosLocalidadFilter("Todos");
+    setCasosHallazgoFilter("Todos");
+    setCasosResultadoFilter("Todos");
+  }, [data, baseMode]);
 
   const requestPreview = (formData: FormData) =>
     new Promise<PreviewResponse>((resolve, reject) => {
@@ -973,7 +1019,17 @@ export default function HomePage() {
   const medidoresLiquidacionM3 = data?.medidores_liquidacion_m3 ?? [];
   const medidoresPendientesLiquidar = data?.medidores_pendientes_liquidar ?? 0;
   const medidoresTotal = data?.medidores_total ?? 0;
+  const casosEspecialesRecords = data?.casos_especiales_records ?? [];
+  const casosEspecialesSeguimientos = data?.casos_especiales_seguimientos ?? [];
+  const casosEspecialesFilterOptions = data?.casos_especiales_filter_options ?? {
+    zona: [],
+    localidad: [],
+    barrio: [],
+    hallazgo: [],
+    resultado: [],
+  };
   const isMedidoresMode = baseMode === "medidores";
+  const isCasosEspecialesMode = baseMode === "casos_especiales";
 
   const estatusOptions = useMemo(() => {
     return data?.all_estatus_options ?? [];
@@ -1146,6 +1202,162 @@ export default function HomePage() {
       .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, "es"));
   }, [filteredChartRecords, estatusPanelFilter]);
 
+  const filteredCasosSeguimientos = useMemo(() => {
+    return casosEspecialesSeguimientos.filter((row) => {
+      if (casosZonaFilter !== "Todos" && normalizeForSearch(row.Zona) !== normalizeForSearch(casosZonaFilter)) return false;
+      if (casosLocalidadFilter !== "Todos" && normalizeForSearch(row.Localidad) !== normalizeForSearch(casosLocalidadFilter)) return false;
+      if (casosHallazgoFilter !== "Todos" && normalizeForSearch(row["Hallazgo encontrado"]) !== normalizeForSearch(casosHallazgoFilter)) return false;
+      if (casosResultadoFilter !== "Todos" && normalizeForSearch(row.Resultado) !== normalizeForSearch(casosResultadoFilter)) return false;
+      return true;
+    });
+  }, [casosEspecialesSeguimientos, casosZonaFilter, casosLocalidadFilter, casosHallazgoFilter, casosResultadoFilter]);
+
+  const filteredCasosRecords = useMemo(() => {
+    return casosEspecialesRecords.filter((row) => {
+      if (casosZonaFilter !== "Todos" && normalizeForSearch(row.Zona) !== normalizeForSearch(casosZonaFilter)) return false;
+      if (casosLocalidadFilter !== "Todos" && normalizeForSearch(row.Localidad) !== normalizeForSearch(casosLocalidadFilter)) return false;
+      if (casosHallazgoFilter !== "Todos" && normalizeForSearch(row["Hallazgo encontrado"]) !== normalizeForSearch(casosHallazgoFilter)) return false;
+      if (casosResultadoFilter !== "Todos") {
+        if (normalizeForSearch(row.Ultimo_resultado) === normalizeForSearch(casosResultadoFilter)) return true;
+        const hasAny = filteredCasosSeguimientos.some(
+          (item) =>
+            normalizeForSearch(item["Cuenta contrato"]) === normalizeForSearch(row["Cuenta contrato"]) &&
+            normalizeForSearch(item.Resultado) === normalizeForSearch(casosResultadoFilter)
+        );
+        if (!hasAny) return false;
+      }
+      return true;
+    });
+  }, [casosEspecialesRecords, casosZonaFilter, casosLocalidadFilter, casosHallazgoFilter, casosResultadoFilter, filteredCasosSeguimientos]);
+
+  const buildCaseCounts = (rows: Record<string, string>[], field: string): ChartPoint[] => {
+    const counts = new Map<string, number>();
+    for (const row of rows) {
+      const label = String(row[field] ?? "").trim();
+      if (!label) continue;
+      counts.set(label, (counts.get(label) ?? 0) + 1);
+    }
+    return Array.from(counts.entries())
+      .map(([label, count]) => ({ label, count }))
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, "es"));
+  };
+
+  const casosHallazgoChart = useMemo(
+    () => buildCaseCounts(filteredCasosRecords as unknown as Record<string, string>[], "Hallazgo encontrado"),
+    [filteredCasosRecords]
+  );
+  const casosLocalidadChart = useMemo(
+    () => buildCaseCounts(filteredCasosRecords as unknown as Record<string, string>[], "Localidad"),
+    [filteredCasosRecords]
+  );
+  const casosResultadoChart = useMemo(
+    () => buildCaseCounts(filteredCasosSeguimientos as unknown as Record<string, string>[], "Resultado"),
+    [filteredCasosSeguimientos]
+  );
+  const casosObservacionChart = useMemo(
+    () => buildCaseCounts(filteredCasosSeguimientos as unknown as Record<string, string>[], "Observación"),
+    [filteredCasosSeguimientos]
+  );
+  const casosBarrioChart = useMemo(
+    () => buildCaseCounts(filteredCasosRecords as unknown as Record<string, string>[], "Barrio"),
+    [filteredCasosRecords]
+  );
+  const casosIntervencionChart = useMemo(
+    () => buildCaseCounts(filteredCasosRecords as unknown as Record<string, string>[], "Intervención"),
+    [filteredCasosRecords]
+  );
+  const casosSeguimientoDepthChart = useMemo(() => {
+    const buckets = new Map<string, number>();
+    for (const row of filteredCasosRecords) {
+      const total = Number(row.Total_seguimientos || 0);
+      const label =
+        total <= 0 ? "Sin seguimiento" :
+        total === 1 ? "1 seguimiento" :
+        total === 2 ? "2 seguimientos" :
+        total <= 4 ? "3 a 4 seguimientos" :
+        "5 o más";
+      buckets.set(label, (buckets.get(label) ?? 0) + 1);
+    }
+    return Array.from(buckets.entries()).map(([label, count]) => ({ label, count }));
+  }, [filteredCasosRecords]);
+  const casosEstadoOperativoChart = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const row of filteredCasosRecords) {
+      const result = normalizeForSearch(row.Ultimo_resultado);
+      const obs = normalizeForSearch(row.Ultima_observacion);
+      let label = "Sin clasificar";
+      if (Number(row.Total_seguimientos || 0) <= 0) label = "Sin seguimiento";
+      else if (obs.includes("reprogramar")) label = "Reprogramado";
+      else if (obs.includes("seguimiento") || result.includes("seguimiento")) label = "En seguimiento";
+      else if (result.includes("servicio normal")) label = "Servicio normal";
+      else if (result.includes("otras") || result.includes("otra")) label = "Otras";
+      counts.set(label, (counts.get(label) ?? 0) + 1);
+    }
+    return Array.from(counts.entries())
+      .map(([label, count]) => ({ label, count }))
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, "es"));
+  }, [filteredCasosRecords]);
+
+  const casosResumenRows = useMemo(
+    () =>
+      filteredCasosRecords
+        .map((row) => ({
+          "Cuenta contrato": row["Cuenta contrato"],
+          "Intervención": row["Intervención"],
+          Zona: row.Zona,
+          Localidad: row.Localidad,
+          "Hallazgo encontrado": row["Hallazgo encontrado"],
+          Seguimientos: row.Total_seguimientos,
+          "Último resultado": row.Ultimo_resultado || "Sin resultado",
+          "Última observación": row.Ultima_observacion || "Sin observación",
+        }))
+        .sort((a, b) => Number(b.Seguimientos) - Number(a.Seguimientos)),
+    [filteredCasosRecords]
+  );
+  const casosReincidenciaRows = useMemo(
+    () =>
+      filteredCasosRecords
+        .filter((row) => Number(row.Total_seguimientos || 0) > 1)
+        .map((row) => ({
+          "Cuenta contrato": row["Cuenta contrato"],
+          "Intervención": row["Intervención"],
+          Localidad: row.Localidad,
+          Barrio: row.Barrio,
+          "Hallazgo": row["Hallazgo encontrado"],
+          "Seguimientos": row.Total_seguimientos,
+          "Último resultado": row.Ultimo_resultado || "Sin resultado",
+        }))
+        .sort((a, b) => Number(b.Seguimientos) - Number(a.Seguimientos)),
+    [filteredCasosRecords]
+  );
+  const casosCriticosRows = useMemo(
+    () =>
+      filteredCasosRecords
+        .filter((row) => {
+          const hallazgo = normalizeForSearch(row["Hallazgo encontrado"]);
+          const resultado = normalizeForSearch(row.Ultimo_resultado);
+          const observacion = normalizeForSearch(row.Ultima_observacion);
+          return (
+            hallazgo.includes("bypass") ||
+            hallazgo.includes("uso no autorizado") ||
+            hallazgo.includes("servicio directo") ||
+            hallazgo.includes("conexion no autorizada") ||
+            observacion.includes("reprogramar") ||
+            observacion.includes("medidor robado") ||
+            resultado.includes("posible anomalia")
+          );
+        })
+        .map((row) => ({
+          "Cuenta contrato": row["Cuenta contrato"],
+          "Intervención": row["Intervención"],
+          Localidad: row.Localidad,
+          "Hallazgo": row["Hallazgo encontrado"],
+          "Último resultado": row.Ultimo_resultado || "Sin resultado",
+          "Última observación": row.Ultima_observacion || "Sin observación",
+        })),
+    [filteredCasosRecords]
+  );
+
   return (
     <main className="relative mx-auto min-h-screen max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
       <div className="pointer-events-none fixed inset-0 -z-10">
@@ -1198,7 +1410,7 @@ export default function HomePage() {
         <div className="absolute -right-10 top-10 h-48 w-48 rounded-full border border-white/10 bg-white/5 blur-2xl" />
         <div className="relative z-10 max-w-4xl">
           <p className={`text-sm font-medium uppercase tracking-[0.32em] ${darkMode ? "text-cyan-200/75" : "text-cyan-50/85"}`}>Centro de Control</p>
-          <h1 className="mt-4 max-w-3xl text-4xl font-bold tracking-tight sm:text-5xl">Tableros de pendientes con lectura clara y control visual serio</h1>
+          <h1 className="mt-4 max-w-3xl text-4xl font-bold tracking-tight sm:text-5xl">Tablero de control y análisis</h1>
           <p className={`mt-4 max-w-3xl text-sm leading-7 sm:text-base ${darkMode ? "text-slate-300" : "text-cyan-50/90"}`}>
             El aplicativo toma la hoja activa, detecta pendientes administrativos, penales y de procedencia, y los organiza en tableros más limpios para seguimiento operativo. La idea es que la lectura sea inmediata y que el tablero se sienta institucional, no improvisado.
           </p>
@@ -1210,7 +1422,7 @@ export default function HomePage() {
         <form onSubmit={onSubmit} className="grid gap-4 sm:grid-cols-12">
           <div className="sm:col-span-12">
             <label className={`mb-3 block text-sm font-medium ${darkMode ? "text-slate-200" : "text-slate-700"}`}>Tipo de base</label>
-            <div className="grid gap-3 md:grid-cols-2">
+            <div className="grid gap-3 md:grid-cols-3">
               {([
                 {
                   key: "administrativa" as const,
@@ -1221,6 +1433,11 @@ export default function HomePage() {
                   key: "medidores" as const,
                   title: "Base de medidores",
                   description: "Prepara la carga para la nueva base de medidores y su analisis independiente."
+                },
+                {
+                  key: "casos_especiales" as const,
+                  title: "Casos especiales",
+                  description: "Activa la carga para un excel independiente de casos especiales."
                 }
               ]).map((option) => {
                 const active = baseMode === option.key;
@@ -1312,7 +1529,7 @@ export default function HomePage() {
         )}
       </section>
 
-      {data && !isMedidoresMode && (
+      {data && !isMedidoresMode && !isCasosEspecialesMode && (
         <section className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
           <div className={`metric-card reveal-up reveal-delay-1 rounded-[26px] border p-5 ${darkMode ? "border-cyan-950/40 bg-slate-900/60" : "border-cyan-100 bg-white/90"}`}>
             <p className={`text-xs uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Hoja usada</p>
@@ -1362,7 +1579,7 @@ export default function HomePage() {
         </section>
       )}
 
-      {data && !isMedidoresMode && (
+      {data && !isMedidoresMode && !isCasosEspecialesMode && (
         <section className="card panel-grid reveal-up reveal-delay-2 relative z-20 mb-8 overflow-visible p-6 sm:p-7">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
@@ -1404,7 +1621,7 @@ export default function HomePage() {
         </section>
       )}
 
-      {data && !isMedidoresMode && (
+      {data && !isMedidoresMode && !isCasosEspecialesMode && (
         <section className="mb-8">
           <section className="grid gap-6 xl:grid-cols-2 2xl:grid-cols-4">
           <div className="reveal-up reveal-delay-2">
@@ -1432,7 +1649,7 @@ export default function HomePage() {
         </section>
       )}
 
-      {data && !isMedidoresMode && (
+      {data && !isMedidoresMode && !isCasosEspecialesMode && (
         <div className="reveal-up reveal-delay-2">
           <BoardTable
             board={adminBoard}
@@ -1443,7 +1660,7 @@ export default function HomePage() {
         </div>
       )}
 
-      {data && !isMedidoresMode && (
+      {data && !isMedidoresMode && !isCasosEspecialesMode && (
         <div className="reveal-up reveal-delay-3">
           <BoardTable
             board={penalBoard}
@@ -1454,7 +1671,7 @@ export default function HomePage() {
         </div>
       )}
 
-      {data && !isMedidoresMode && (
+      {data && !isMedidoresMode && !isCasosEspecialesMode && (
         <div className="reveal-up reveal-delay-4">
           <BoardTable
             board={noProcedenteBoard}
@@ -1493,6 +1710,112 @@ export default function HomePage() {
             actionLoading={exportingReport}
           />
         </div>
+      )}
+
+      {data && isCasosEspecialesMode && (
+        <section className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-6">
+          <div className={`metric-card reveal-up reveal-delay-1 rounded-[26px] border p-5 ${darkMode ? "border-cyan-950/40 bg-slate-900/60" : "border-cyan-100 bg-white/90"}`}>
+            <p className={`text-xs uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Hoja usada</p>
+            <p className={`mt-2 text-2xl font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{data.sheet_used}</p>
+          </div>
+          <div className={`metric-card reveal-up reveal-delay-2 rounded-[26px] border p-5 ${darkMode ? "border-sky-950/40 bg-slate-900/60" : "border-sky-100 bg-white/90"}`}>
+            <p className={`text-xs uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Casos visibles</p>
+            <p className={`mt-2 text-2xl font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{filteredCasosRecords.length}</p>
+          </div>
+          <div className={`metric-card reveal-up reveal-delay-3 rounded-[26px] border p-5 ${darkMode ? "border-emerald-950/40 bg-slate-900/60" : "border-emerald-100 bg-white/90"}`}>
+            <p className={`text-xs uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Cuentas únicas</p>
+            <p className={`mt-2 text-2xl font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{new Set(filteredCasosRecords.map((row) => row["Cuenta contrato"]).filter(Boolean)).size}</p>
+          </div>
+          <div className={`metric-card reveal-up reveal-delay-4 rounded-[26px] border p-5 ${darkMode ? "border-amber-950/40 bg-slate-900/60" : "border-amber-100 bg-white/90"}`}>
+            <p className={`text-xs uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Seguimientos visibles</p>
+            <p className={`mt-2 text-2xl font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{filteredCasosSeguimientos.length}</p>
+          </div>
+          <div className={`metric-card reveal-up reveal-delay-5 rounded-[26px] border p-5 ${darkMode ? "border-rose-950/40 bg-slate-900/60" : "border-rose-100 bg-white/90"}`}>
+            <p className={`text-xs uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Casos con seguimiento</p>
+            <p className={`mt-2 text-2xl font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{filteredCasosRecords.filter((row) => row.Tiene_seguimiento === "Si").length}</p>
+          </div>
+          <div className={`metric-card reveal-up reveal-delay-5 rounded-[26px] border p-5 ${darkMode ? "border-fuchsia-950/40 bg-slate-900/60" : "border-fuchsia-100 bg-white/90"}`}>
+            <p className={`text-xs uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Reprogramados</p>
+            <p className={`mt-2 text-2xl font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{filteredCasosRecords.filter((row) => normalizeForSearch(row.Ultima_observacion).includes("reprogramar")).length}</p>
+          </div>
+        </section>
+      )}
+
+      {data && isCasosEspecialesMode && (
+        <section className="card panel-grid reveal-up reveal-delay-2 relative z-20 mb-8 overflow-visible p-6 sm:p-7">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <p className={`text-[11px] font-semibold uppercase tracking-[0.28em] ${darkMode ? "text-cyan-200/70" : "text-cyan-800/70"}`}>Exploración operativa</p>
+              <h2 className={`mt-2 text-xl font-semibold tracking-tight ${darkMode ? "text-slate-100" : "text-slate-900"}`}>Filtros de casos especiales</h2>
+              <p className={`mt-2 max-w-3xl text-sm leading-6 ${darkMode ? "text-slate-400" : "text-slate-600"}`}>Cruza hallazgos, territorio y resultados de seguimiento para identificar focos, reincidencias y casos que siguen abiertos o reprogamados.</p>
+            </div>
+            <div className="grid w-full gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <select value={casosZonaFilter} onChange={(e) => setCasosZonaFilter(e.target.value)} className={`block w-full rounded-xl border px-3 py-2 text-sm ${darkMode ? "border-slate-700 bg-slate-900/70 text-slate-100" : "border-slate-300 text-slate-800"}`}>
+                <option>Todos</option>
+                {casosEspecialesFilterOptions.zona.map((option) => <option key={option} value={option}>{option}</option>)}
+              </select>
+              <select value={casosLocalidadFilter} onChange={(e) => setCasosLocalidadFilter(e.target.value)} className={`block w-full rounded-xl border px-3 py-2 text-sm ${darkMode ? "border-slate-700 bg-slate-900/70 text-slate-100" : "border-slate-300 text-slate-800"}`}>
+                <option>Todos</option>
+                {casosEspecialesFilterOptions.localidad.map((option) => <option key={option} value={option}>{option}</option>)}
+              </select>
+              <select value={casosHallazgoFilter} onChange={(e) => setCasosHallazgoFilter(e.target.value)} className={`block w-full rounded-xl border px-3 py-2 text-sm ${darkMode ? "border-slate-700 bg-slate-900/70 text-slate-100" : "border-slate-300 text-slate-800"}`}>
+                <option>Todos</option>
+                {casosEspecialesFilterOptions.hallazgo.map((option) => <option key={option} value={option}>{option}</option>)}
+              </select>
+              <select value={casosResultadoFilter} onChange={(e) => setCasosResultadoFilter(e.target.value)} className={`block w-full rounded-xl border px-3 py-2 text-sm ${darkMode ? "border-slate-700 bg-slate-900/70 text-slate-100" : "border-slate-300 text-slate-800"}`}>
+                <option>Todos</option>
+                {casosEspecialesFilterOptions.resultado.map((option) => <option key={option} value={option}>{option}</option>)}
+              </select>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {data && isCasosEspecialesMode && (
+        <section className="mb-8 grid gap-6 xl:grid-cols-2 2xl:grid-cols-4">
+          <div className="reveal-up reveal-delay-2"><MiniBarChart title="Hallazgos" data={casosHallazgoChart} darkMode={darkMode} /></div>
+          <div className="reveal-up reveal-delay-3"><MiniBarChart title="Localidades" data={casosLocalidadChart} darkMode={darkMode} /></div>
+          <div className="reveal-up reveal-delay-4"><MiniBarChart title="Resultados" data={casosResultadoChart} darkMode={darkMode} /></div>
+          <div className="reveal-up reveal-delay-5"><ObservationChart title="Observaciones" data={casosObservacionChart} darkMode={darkMode} activeEstatus="" /></div>
+        </section>
+      )}
+
+      {data && isCasosEspecialesMode && (
+        <section className="mb-8 grid gap-6 xl:grid-cols-2 2xl:grid-cols-4">
+          <div className="reveal-up reveal-delay-2"><MiniBarChart title="Barrios" data={casosBarrioChart} darkMode={darkMode} /></div>
+          <div className="reveal-up reveal-delay-3"><MiniBarChart title="Intervenciones" data={casosIntervencionChart} darkMode={darkMode} /></div>
+          <div className="reveal-up reveal-delay-4"><MiniBarChart title="Profundidad seguimiento" data={casosSeguimientoDepthChart} darkMode={darkMode} /></div>
+          <div className="reveal-up reveal-delay-5"><MiniBarChart title="Estado operativo" data={casosEstadoOperativoChart} darkMode={darkMode} /></div>
+        </section>
+      )}
+
+      {data && isCasosEspecialesMode && (
+        <div className="reveal-up reveal-delay-5 mb-8">
+          <DataTableCard
+            title="Resumen ejecutivo de casos especiales"
+            rows={casosResumenRows}
+            darkMode={darkMode}
+          />
+        </div>
+      )}
+
+      {data && isCasosEspecialesMode && (
+        <section className="mb-8 grid gap-6 xl:grid-cols-2">
+          <div className="reveal-up reveal-delay-5">
+            <DataTableCard
+              title="Reincidencias y seguimientos recurrentes"
+              rows={casosReincidenciaRows}
+              darkMode={darkMode}
+            />
+          </div>
+          <div className="reveal-up reveal-delay-5">
+            <DataTableCard
+              title="Casos críticos y observaciones sensibles"
+              rows={casosCriticosRows}
+              darkMode={darkMode}
+            />
+          </div>
+        </section>
       )}
 
     </main>

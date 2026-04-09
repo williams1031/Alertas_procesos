@@ -937,6 +937,126 @@ def build_medidores_payload(df: pd.DataFrame, target_sheet: str, available_sheet
     }
 
 
+def build_casos_especiales_payload(df: pd.DataFrame, target_sheet: str, available_sheets: list[str]) -> dict[str, Any]:
+    columns = [str(c) for c in df.columns]
+
+    base_map = {
+        "N°": find_column(columns, "N°") or find_column(columns, "No") or find_column(columns, "N"),
+        "Intervención": find_column(columns, "Intervención") or find_column(columns, "Intervencion"),
+        "Zona": find_column(columns, "Zona"),
+        "Porción": find_column(columns, "Porción") or find_column(columns, "Porcion"),
+        "Dirección": find_column(columns, "Dirección") or find_column(columns, "Direccion"),
+        "Localidad": find_column(columns, "Localidad"),
+        "Barrio": find_column(columns, "Barrio"),
+        "Cuenta contrato": find_column(columns, "Cuenta contrato") or find_column(columns, "Cuenta Contrato"),
+        "Hallazgo encontrado": find_column(columns, "Hallazgo encontrado"),
+        "Interlocutor": find_column(columns, "Interlocutor"),
+        "Equipo": find_column(columns, "Equipo"),
+    }
+
+    normalized_columns = [(col_name, normalize_text(col_name)) for col_name in columns]
+    seguimiento_cols = [name for name, norm in normalized_columns if norm.startswith("seguimiento no.")]
+    if not seguimiento_cols:
+        seguimiento_cols = [name for name, norm in normalized_columns if norm.startswith("seguimiento no")]
+    resultado_cols = [name for name, norm in normalized_columns if norm == "resultado" or norm.startswith("resultado.")]
+    observacion_cols = [name for name, norm in normalized_columns if norm == "observacion" or norm.startswith("observacion.")]
+
+    max_groups = max(len(seguimiento_cols), len(resultado_cols), len(observacion_cols))
+
+    def safe_text(source_name: str | None, row: pd.Series) -> str:
+        if not source_name:
+            return ""
+        return str(row.get(source_name) or "").strip()
+
+    case_records: list[dict[str, Any]] = []
+    seguimiento_records: list[dict[str, str]] = []
+
+    for _, row in df.iterrows():
+        base_record = {key: safe_text(column_name, row) for key, column_name in base_map.items()}
+        if not any(base_record.values()):
+            continue
+
+        seguimientos: list[dict[str, str]] = []
+        for idx in range(max_groups):
+            seguimiento_value = safe_text(seguimiento_cols[idx] if idx < len(seguimiento_cols) else None, row)
+            resultado_value = safe_text(resultado_cols[idx] if idx < len(resultado_cols) else None, row)
+            observacion_value = safe_text(observacion_cols[idx] if idx < len(observacion_cols) else None, row)
+            if not seguimiento_value and not resultado_value and not observacion_value:
+                continue
+            track = {
+                "Seguimiento": seguimiento_value,
+                "Resultado": resultado_value,
+                "Observación": observacion_value,
+            }
+            seguimientos.append(track)
+            seguimiento_records.append(
+                {
+                    "Zona": base_record["Zona"],
+                    "Localidad": base_record["Localidad"],
+                    "Barrio": base_record["Barrio"],
+                    "Hallazgo encontrado": base_record["Hallazgo encontrado"],
+                    "Intervención": base_record["Intervención"],
+                    "Cuenta contrato": base_record["Cuenta contrato"],
+                    "Resultado": resultado_value,
+                    "Observación": observacion_value,
+                }
+            )
+
+        ultimo_resultado = next((item["Resultado"] for item in reversed(seguimientos) if item["Resultado"]), "")
+        ultima_observacion = next((item["Observación"] for item in reversed(seguimientos) if item["Observación"]), "")
+
+        case_records.append(
+            {
+                **base_record,
+                "Total_seguimientos": len(seguimientos),
+                "Ultimo_resultado": ultimo_resultado,
+                "Ultima_observacion": ultima_observacion,
+                "Tiene_seguimiento": "Si" if seguimientos else "No",
+            }
+        )
+
+    def build_option_values(items: list[dict[str, Any]], field: str) -> list[str]:
+        values = sorted(
+            {
+                str(item.get(field) or "").strip()
+                for item in items
+                if str(item.get(field) or "").strip()
+            },
+            key=lambda item: item.lower(),
+        )
+        return values
+
+    return {
+        "sheet_used": target_sheet,
+        "available_sheets": available_sheets,
+        "source_columns": [str(c) for c in df.columns],
+        "source_total_rows": len(df.index),
+        "all_estatus_options": [],
+        "all_estado_options": [],
+        "chart_records": [],
+        "report_records": [],
+        "source_preview": serialize_for_json(df, limit=20),
+        "admin_control_records": [],
+        "penal_control_records": [],
+        "no_procedente_control_records": [],
+        "medidores_total": 0,
+        "medidores_retirado_por": [],
+        "medidores_concepto": [],
+        "medidores_pendientes": [],
+        "medidores_liquidacion_m3": [],
+        "medidores_pendientes_liquidar": 0,
+        "casos_especiales_records": case_records,
+        "casos_especiales_seguimientos": seguimiento_records,
+        "casos_especiales_filter_options": {
+            "zona": build_option_values(case_records, "Zona"),
+            "localidad": build_option_values(case_records, "Localidad"),
+            "barrio": build_option_values(case_records, "Barrio"),
+            "hallazgo": build_option_values(case_records, "Hallazgo encontrado"),
+            "resultado": build_option_values(seguimiento_records, "Resultado"),
+        },
+    }
+
+
 def build_report_records(df: pd.DataFrame) -> list[dict[str, str]]:
     column_candidates = {
         "Aviso_T2": ["Aviso_T2"],
@@ -994,6 +1114,8 @@ def process_excel_bytes(file_bytes: bytes, sheet_name: str | None, base_mode: st
 
     if normalized_mode == "medidores":
         return build_medidores_payload(df, target_sheet, available_sheets)
+    if normalized_mode == "casos especiales" or normalized_mode == "casos_especiales":
+        return build_casos_especiales_payload(df, target_sheet, available_sheets)
     return build_administrativa_payload(df, target_sheet, available_sheets)
 
 
