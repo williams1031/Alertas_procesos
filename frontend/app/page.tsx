@@ -1300,6 +1300,34 @@ export default function HomePage() {
       .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, "es"));
   }, [filteredCasosRecords]);
 
+  const casosSinSeguimientoCount = useMemo(
+    () => filteredCasosRecords.filter((row) => Number(row.Total_seguimientos || 0) <= 0).length,
+    [filteredCasosRecords]
+  );
+  const casosReprogramadosCount = useMemo(
+    () => filteredCasosRecords.filter((row) => normalizeForSearch(row.Ultima_observacion).includes("reprogramar")).length,
+    [filteredCasosRecords]
+  );
+  const casosReincidentesCount = useMemo(
+    () => filteredCasosRecords.filter((row) => Number(row.Total_seguimientos || 0) > 1).length,
+    [filteredCasosRecords]
+  );
+  const casosHallazgosSensiblesCount = useMemo(
+    () =>
+      filteredCasosRecords.filter((row) => {
+        const hallazgo = normalizeForSearch(row["Hallazgo encontrado"]);
+        return (
+          hallazgo.includes("bypass") ||
+          hallazgo.includes("uso no autorizado") ||
+          hallazgo.includes("servicio directo") ||
+          hallazgo.includes("conexion no autorizada") ||
+          hallazgo.includes("clandestina") ||
+          hallazgo.includes("fraudulenta")
+        );
+      }).length,
+    [filteredCasosRecords]
+  );
+
   const casosResumenRows = useMemo(
     () =>
       filteredCasosRecords
@@ -1565,24 +1593,24 @@ export default function HomePage() {
           darkMode={darkMode}
         >
           <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-5">
-            <DashboardMetricCard label="Hoja usada" value={data.sheet_used} accent="cyan" detail="Fuente activa" />
-            <DashboardMetricCard label="Filas leídas" value={data.source_total_rows} accent="violet" detail="Registros detectados" />
-            <DashboardMetricCard label="Retiros contabilizados" value={medidoresTotal} accent="emerald" detail="Columna Retirado por" />
-            <DashboardMetricCard label="Pendientes por concepto" value={medidoresPendientes.length} accent="amber" detail="Concepto = Pendiente" />
-            <DashboardMetricCard label="Pendientes por liquidar" value={medidoresPendientesLiquidar} accent="rose" detail="Liquidación en m3 = Pendiente" />
+            <DashboardMetricCard label="Hoja usada" value={data.sheet_used} accent="cyan" detail="Fuente activa" darkMode={darkMode} />
+            <DashboardMetricCard label="Filas leídas" value={data.source_total_rows} accent="violet" detail="Registros detectados" darkMode={darkMode} />
+            <DashboardMetricCard label="Retiros contabilizados" value={medidoresTotal} accent="emerald" detail="Columna Retirado por" darkMode={darkMode} />
+            <DashboardMetricCard label="Pendientes por concepto" value={medidoresPendientes.length} accent="amber" detail="Concepto = Pendiente" darkMode={darkMode} />
+            <DashboardMetricCard label="Pendientes por liquidar" value={medidoresPendientesLiquidar} accent="rose" detail="Liquidación en m3 = Pendiente" darkMode={darkMode} />
           </section>
 
           <section className="grid gap-5 xl:grid-cols-2 2xl:grid-cols-[1.05fr_1.05fr_1.2fr]">
-            <div className="dashboard-panel"><MedidoresRetiradoChart data={medidoresRetiradoPor} darkMode={true} /></div>
-            <div className="dashboard-panel"><MedidoresConceptoChart data={medidoresConcepto} darkMode={true} /></div>
-            <div className="dashboard-panel"><MedidoresLiquidacionCard data={medidoresLiquidacionM3} darkMode={true} /></div>
+            <div className="dashboard-panel"><MedidoresRetiradoChart data={medidoresRetiradoPor} darkMode={darkMode} /></div>
+            <div className="dashboard-panel"><MedidoresConceptoChart data={medidoresConcepto} darkMode={darkMode} /></div>
+            <div className="dashboard-panel"><MedidoresLiquidacionCard data={medidoresLiquidacionM3} darkMode={darkMode} /></div>
           </section>
 
           <div className="dashboard-panel">
             <DataTableCard
               title="Cuentas contrato con concepto Pendiente"
               rows={medidoresPendientes}
-              darkMode={true}
+              darkMode={darkMode}
               actionLabel="Descargar pendientes"
               onAction={downloadMedidoresPendientes}
               actionLoading={exportingReport}
@@ -1703,37 +1731,36 @@ export default function HomePage() {
           darkMode={darkMode}
           variant="cases"
         >
-          <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
-            <DashboardMetricCard label="Hoja usada" value={data.sheet_used} accent="cyan" detail="Fuente activa" compact />
-            <DashboardMetricCard label="Casos visibles" value={filteredCasosRecords.length} accent="violet" detail="Tras aplicar filtros" compact />
-            <DashboardMetricCard label="Cuentas únicas" value={new Set(filteredCasosRecords.map((row) => row["Cuenta contrato"]).filter(Boolean)).size} accent="emerald" detail="Contratos distintos" compact />
-            <DashboardMetricCard label="Seguimientos visibles" value={filteredCasosSeguimientos.length} accent="amber" detail="Filas del bloque seguimiento" compact />
-            <DashboardMetricCard label="Casos con seguimiento" value={filteredCasosRecords.filter((row) => row.Tiene_seguimiento === "Si").length} accent="rose" detail="Con trazabilidad" compact />
-            <DashboardMetricCard label="Reprogramados" value={filteredCasosRecords.filter((row) => normalizeForSearch(row.Ultima_observacion).includes("reprogramar")).length} accent="fuchsia" detail="Última observación" compact />
+          <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
+            <DashboardMetricCard label="Casos críticos" value={casosCriticosRows.length} accent="rose" detail="Hallazgos u observaciones sensibles" compact darkMode={darkMode} />
+            <DashboardMetricCard label="Sin seguimiento" value={casosSinSeguimientoCount} accent="amber" detail="Casos sin gestión registrada" compact darkMode={darkMode} />
+            <DashboardMetricCard label="Reincidentes" value={casosReincidentesCount} accent="violet" detail="Con más de un seguimiento" compact darkMode={darkMode} />
+            <DashboardMetricCard label="Reprogramados" value={casosReprogramadosCount} accent="fuchsia" detail="Última observación" compact darkMode={darkMode} />
+            <DashboardMetricCard label="Hallazgos sensibles" value={casosHallazgosSensiblesCount} accent="cyan" detail="Bypass, no autorizados y similares" compact darkMode={darkMode} />
           </section>
 
-          <section className="dashboard-filterbar">
+          <section className={`dashboard-filterbar ${darkMode ? "dashboard-filterbar-dark" : "dashboard-filterbar-light"}`}>
             <div>
               <p className="dashboard-brand-eyebrow">Exploración operativa</p>
-              <h3 className="mt-2 text-lg font-semibold text-slate-100">Filtros de casos especiales</h3>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">
+              <h3 className={`mt-2 text-lg font-semibold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>Filtros de casos especiales</h3>
+              <p className={`mt-2 max-w-3xl text-sm leading-6 ${darkMode ? "text-slate-400" : "text-slate-600"}`}>
                 Cruza hallazgos, territorio y resultados para identificar focos, reincidencias y casos que siguen abiertos o reprogramados.
               </p>
             </div>
             <div className="grid w-full gap-3 md:grid-cols-2 xl:grid-cols-4">
-              <select value={casosZonaFilter} onChange={(e) => setCasosZonaFilter(e.target.value)} className="dashboard-select">
+              <select value={casosZonaFilter} onChange={(e) => setCasosZonaFilter(e.target.value)} className={`dashboard-select ${darkMode ? "dashboard-select-dark" : "dashboard-select-light"}`}>
                 <option>Todos</option>
                 {casosEspecialesFilterOptions.zona.map((option) => <option key={option} value={option}>{option}</option>)}
               </select>
-              <select value={casosLocalidadFilter} onChange={(e) => setCasosLocalidadFilter(e.target.value)} className="dashboard-select">
+              <select value={casosLocalidadFilter} onChange={(e) => setCasosLocalidadFilter(e.target.value)} className={`dashboard-select ${darkMode ? "dashboard-select-dark" : "dashboard-select-light"}`}>
                 <option>Todos</option>
                 {casosEspecialesFilterOptions.localidad.map((option) => <option key={option} value={option}>{option}</option>)}
               </select>
-              <select value={casosHallazgoFilter} onChange={(e) => setCasosHallazgoFilter(e.target.value)} className="dashboard-select">
+              <select value={casosHallazgoFilter} onChange={(e) => setCasosHallazgoFilter(e.target.value)} className={`dashboard-select ${darkMode ? "dashboard-select-dark" : "dashboard-select-light"}`}>
                 <option>Todos</option>
                 {casosEspecialesFilterOptions.hallazgo.map((option) => <option key={option} value={option}>{option}</option>)}
               </select>
-              <select value={casosResultadoFilter} onChange={(e) => setCasosResultadoFilter(e.target.value)} className="dashboard-select">
+              <select value={casosResultadoFilter} onChange={(e) => setCasosResultadoFilter(e.target.value)} className={`dashboard-select ${darkMode ? "dashboard-select-dark" : "dashboard-select-light"}`}>
                 <option>Todos</option>
                 {casosEspecialesFilterOptions.resultado.map((option) => <option key={option} value={option}>{option}</option>)}
               </select>
@@ -1741,29 +1768,29 @@ export default function HomePage() {
           </section>
 
           <section className="grid gap-5 xl:grid-cols-2">
-            <div className="dashboard-panel"><MiniBarChart title="Hallazgos" data={casosHallazgoChart} darkMode={true} allowWrapLabels /></div>
-            <div className="dashboard-panel"><MiniBarChart title="Localidades" data={casosLocalidadChart} darkMode={true} allowWrapLabels /></div>
-            <div className="dashboard-panel"><MiniBarChart title="Resultados" data={casosResultadoChart} darkMode={true} allowWrapLabels /></div>
-            <div className="dashboard-panel"><ObservationChart title="Observaciones" data={casosObservacionChart} darkMode={true} activeEstatus="" allowWrapLabels /></div>
+            <div className="dashboard-panel"><MiniBarChart title="Hallazgos" data={casosHallazgoChart} darkMode={darkMode} allowWrapLabels /></div>
+            <div className="dashboard-panel"><MiniBarChart title="Localidades" data={casosLocalidadChart} darkMode={darkMode} allowWrapLabels /></div>
+            <div className="dashboard-panel"><MiniBarChart title="Resultados" data={casosResultadoChart} darkMode={darkMode} allowWrapLabels /></div>
+            <div className="dashboard-panel"><ObservationChart title="Observaciones" data={casosObservacionChart} darkMode={darkMode} activeEstatus="" allowWrapLabels /></div>
           </section>
 
           <section className="grid gap-5 xl:grid-cols-2">
-            <div className="dashboard-panel"><MiniBarChart title="Barrios" data={casosBarrioChart} darkMode={true} allowWrapLabels /></div>
-            <div className="dashboard-panel"><MiniBarChart title="Intervenciones" data={casosIntervencionChart} darkMode={true} allowWrapLabels /></div>
-            <div className="dashboard-panel"><MiniBarChart title="Profundidad seguimiento" data={casosSeguimientoDepthChart} darkMode={true} allowWrapLabels /></div>
-            <div className="dashboard-panel"><MiniBarChart title="Estado operativo" data={casosEstadoOperativoChart} darkMode={true} allowWrapLabels /></div>
+            <div className="dashboard-panel"><MiniBarChart title="Barrios" data={casosBarrioChart} darkMode={darkMode} allowWrapLabels /></div>
+            <div className="dashboard-panel"><MiniBarChart title="Intervenciones" data={casosIntervencionChart} darkMode={darkMode} allowWrapLabels /></div>
+            <div className="dashboard-panel"><MiniBarChart title="Profundidad seguimiento" data={casosSeguimientoDepthChart} darkMode={darkMode} allowWrapLabels /></div>
+            <div className="dashboard-panel"><MiniBarChart title="Estado operativo" data={casosEstadoOperativoChart} darkMode={darkMode} allowWrapLabels /></div>
           </section>
 
           <div className="dashboard-panel">
-            <DataTableCard title="Resumen ejecutivo de casos especiales" rows={casosResumenRows} darkMode={true} wrapCells variant="executive" />
+            <DataTableCard title="Resumen ejecutivo de casos especiales" rows={casosResumenRows} darkMode={darkMode} wrapCells variant="executive" />
           </div>
 
           <section className="grid gap-5 xl:grid-cols-2">
             <div className="dashboard-panel">
-              <DataTableCard title="Reincidencias y seguimientos recurrentes" rows={casosReincidenciaRows} darkMode={true} wrapCells variant="executive" />
+              <DataTableCard title="Reincidencias y seguimientos recurrentes" rows={casosReincidenciaRows} darkMode={darkMode} wrapCells variant="executive" />
             </div>
             <div className="dashboard-panel">
-              <DataTableCard title="Casos críticos y observaciones sensibles" rows={casosCriticosRows} darkMode={true} wrapCells variant="executive" />
+              <DataTableCard title="Casos críticos y observaciones sensibles" rows={casosCriticosRows} darkMode={darkMode} wrapCells variant="executive" />
             </div>
           </section>
         </DashboardShell>
@@ -1797,6 +1824,29 @@ function DataTableCard({
   useEffect(() => {
     setExpanded(false);
   }, [rows]);
+
+  const formatCellValue = (value: string | number | null | undefined) => {
+    const text = String(value ?? "").trim();
+    const normalized = normalizeForSearch(text);
+    if (!text || normalized === "nan" || normalized === "nat" || normalized === "none" || normalized === "undefined" || normalized === "null") {
+      return "-";
+    }
+    return text;
+  };
+
+  const getExecutiveColumnClass = (header: string) => {
+    const key = normalizeForSearch(header);
+    if (key.includes("cuenta contrato")) return "w-[9rem]";
+    if (key.includes("intervencion")) return "w-[16rem]";
+    if (key === "zona") return "w-[5rem]";
+    if (key.includes("localidad")) return "w-[10rem]";
+    if (key.includes("hallazgo")) return "w-[20rem]";
+    if (key.includes("seguimientos")) return "w-[7rem]";
+    if (key.includes("ultimo resultado")) return "w-[10rem]";
+    if (key.includes("ultima observacion")) return "w-[14rem]";
+    return "w-auto";
+  };
+
   if (!rows.length) {
     return (
       <section className={`card overflow-hidden p-6 ${variant === "executive" ? "dashboard-table-card" : ""}`}>
@@ -1837,11 +1887,11 @@ function DataTableCard({
         )}
       </div>
       <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-200/10">
-        <table className="min-w-full text-sm">
+        <table className={`${variant === "executive" ? "min-w-[1180px] table-fixed text-sm" : "min-w-full text-sm"}`}>
           <thead className={darkMode ? "bg-slate-900/80" : "bg-brand-50"}>
             <tr>
               {headers.map((header) => (
-                <th key={header} className={`${wrapCells ? "whitespace-normal" : "whitespace-nowrap"} px-3 py-2 text-left font-semibold align-top ${darkMode ? "text-brand-200" : "text-brand-900"}`}>
+                <th key={header} className={`${variant === "executive" ? getExecutiveColumnClass(header) : ""} ${wrapCells ? "whitespace-normal" : "whitespace-nowrap"} px-3 py-2 text-left font-semibold align-top ${darkMode ? "text-brand-200" : "text-brand-900"}`}>
                   {header}
                 </th>
               ))}
@@ -1851,8 +1901,8 @@ function DataTableCard({
             {visibleRows.map((row, index) => (
               <tr key={index} className={`${darkMode ? "border-slate-800/90 odd:bg-slate-900/40 even:bg-slate-900/70" : "border-slate-100 odd:bg-white even:bg-slate-50/50"} border-t`}>
                 {headers.map((header) => (
-                  <td key={header} className={`${wrapCells ? "max-w-[16rem] whitespace-normal break-words" : "whitespace-nowrap"} px-3 py-2 align-top ${darkMode ? "text-slate-200" : "text-slate-700"}`}>
-                    {row[header] ?? "-"}
+                  <td key={header} className={`${variant === "executive" ? getExecutiveColumnClass(header) : ""} ${wrapCells ? "max-w-[22rem] whitespace-normal break-words" : "whitespace-nowrap"} px-3 py-2 align-top ${darkMode ? "text-slate-200" : "text-slate-700"}`}>
+                    {formatCellValue(row[header])}
                   </td>
                 ))}
               </tr>
@@ -1892,24 +1942,22 @@ function DashboardShell({
   children: ReactNode;
   variant?: "default" | "cases";
 }) {
-  const shellDark = true;
-
   return (
-    <section className={`dashboard-shell ${variant === "cases" ? "dashboard-shell-cases" : ""} reveal-up reveal-delay-2 relative mb-10 overflow-hidden rounded-[34px] border p-4 sm:p-5`}>
+    <section className={`dashboard-shell ${darkMode ? "dashboard-shell-dark" : "dashboard-shell-light"} ${variant === "cases" ? "dashboard-shell-cases" : ""} reveal-up reveal-delay-2 relative mb-10 overflow-hidden rounded-[34px] border p-4 sm:p-5`}>
       <div className="grid gap-5 xl:grid-cols-[248px_minmax(0,1fr)] 2xl:grid-cols-[264px_minmax(0,1fr)]">
-        <aside className="dashboard-sidebar hidden xl:flex">
+        <aside className={`dashboard-sidebar ${darkMode ? "dashboard-sidebar-dark" : "dashboard-sidebar-light"} hidden xl:flex`}>
           <div className="dashboard-brand">
             <div className="dashboard-brand-mark">A</div>
             <div>
               <p className="dashboard-brand-eyebrow">{eyebrow}</p>
-              <h3 className="dashboard-brand-title">{title}</h3>
+              <h3 className={`dashboard-brand-title ${darkMode ? "text-slate-50" : "text-slate-900"}`}>{title}</h3>
             </div>
           </div>
           <nav className="mt-8 space-y-2">
             {navItems.map((item, index) => (
               <div
                 key={item}
-                className={`dashboard-nav-item ${index === 0 ? "dashboard-nav-item-active" : ""}`}
+                className={`dashboard-nav-item ${darkMode ? "dashboard-nav-item-dark" : "dashboard-nav-item-light"} ${index === 0 ? "dashboard-nav-item-active" : ""}`}
               >
                 <span className="dashboard-nav-dot" />
                 {item}
@@ -1920,15 +1968,15 @@ function DashboardShell({
         </aside>
 
         <div className="min-w-0 space-y-5">
-          <header className="dashboard-topbar">
+          <header className={`dashboard-topbar ${darkMode ? "dashboard-topbar-dark" : "dashboard-topbar-light"}`}>
             <div>
               <p className="dashboard-brand-eyebrow">{eyebrow}</p>
-              <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-50">{title}</h2>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">{description}</p>
+              <h2 className={`mt-2 text-2xl font-semibold tracking-tight ${darkMode ? "text-slate-50" : "text-slate-900"}`}>{title}</h2>
+              <p className={`mt-2 max-w-3xl text-sm leading-6 ${darkMode ? "text-slate-400" : "text-slate-600"}`}>{description}</p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <div className="dashboard-top-chip">Vista operativa</div>
-              <div className="dashboard-top-chip">{darkMode ? "Tema oscuro" : "Tema claro"}</div>
+              <div className={`dashboard-top-chip ${darkMode ? "dashboard-top-chip-dark" : "dashboard-top-chip-light"}`}>Vista operativa</div>
+              <div className={`dashboard-top-chip ${darkMode ? "dashboard-top-chip-dark" : "dashboard-top-chip-light"}`}>{darkMode ? "Tema oscuro" : "Tema claro"}</div>
             </div>
           </header>
           {children}
@@ -1943,13 +1991,15 @@ function DashboardMetricCard({
   value,
   accent = "cyan",
   detail,
-  compact = false
+  compact = false,
+  darkMode
 }: {
   label: string;
   value: string | number;
   accent?: "cyan" | "violet" | "amber" | "emerald" | "rose" | "fuchsia";
   detail?: string;
   compact?: boolean;
+  darkMode: boolean;
 }) {
   const accentClass = {
     cyan: "dashboard-metric-cyan",
@@ -1961,10 +2011,10 @@ function DashboardMetricCard({
   }[accent];
 
   return (
-    <article className={`dashboard-metric ${compact ? "dashboard-metric-compact" : ""} ${accentClass}`}>
-      <p className="dashboard-metric-label">{label}</p>
-      <p className="dashboard-metric-value">{value}</p>
-      {detail && <p className="dashboard-metric-detail">{detail}</p>}
+    <article className={`dashboard-metric ${darkMode ? "dashboard-metric-dark" : "dashboard-metric-light"} ${compact ? "dashboard-metric-compact" : ""} ${accentClass}`}>
+      <p className={`dashboard-metric-label ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{label}</p>
+      <p className={`dashboard-metric-value ${darkMode ? "text-slate-50" : "text-slate-900"}`}>{value}</p>
+      {detail && <p className={`dashboard-metric-detail ${darkMode ? "text-slate-400" : "text-slate-600"}`}>{detail}</p>}
       <div className="dashboard-metric-wave" />
     </article>
   );

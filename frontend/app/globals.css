@@ -150,15 +150,29 @@ body {
 
 .dashboard-shell {
   min-width: 0;
+  box-shadow:
+    0 42px 120px -56px rgba(2, 8, 23, 0.95),
+    inset 0 1px 0 rgba(148, 163, 184, 0.1);
+  padding-inline: 1rem;
+}
+
+.dashboard-shell-dark {
   border-color: rgba(51, 65, 85, 0.9);
   background:
     radial-gradient(circle at top left, rgba(34, 211, 238, 0.12), transparent 22%),
     radial-gradient(circle at 92% 0%, rgba(129, 140, 248, 0.12), transparent 20%),
     linear-gradient(180deg, rgba(8, 15, 31, 0.98), rgba(10, 18, 34, 0.98));
+}
+
+.dashboard-shell-light {
+  border-color: rgba(191, 219, 254, 0.9);
+  background:
+    radial-gradient(circle at top left, rgba(45, 212, 191, 0.12), transparent 24%),
+    radial-gradient(circle at 92% 0%, rgba(59, 130, 246, 0.1), transparent 22%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(242, 248, 252, 0.96));
   box-shadow:
-    0 42px 120px -56px rgba(2, 8, 23, 0.95),
-    inset 0 1px 0 rgba(148, 163, 184, 0.1);
-  padding-inline: 1rem;
+    0 36px 90px -54px rgba(15, 23, 42, 0.26),
+    inset 0 1px 0 rgba(255, 255, 255, 0.55);
 }
 
 .dashboard-shell-cases {
@@ -168,17 +182,34 @@ body {
     linear-gradient(180deg, rgba(10, 14, 30, 0.985), rgba(11, 17, 34, 0.985));
 }
 
+.dashboard-shell-light.dashboard-shell-cases {
+  background:
+    radial-gradient(circle at 14% 10%, rgba(244, 114, 182, 0.09), transparent 18%),
+    radial-gradient(circle at 92% 2%, rgba(251, 191, 36, 0.07), transparent 15%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(245, 247, 251, 0.97));
+}
+
 .dashboard-sidebar {
   position: relative;
   min-width: 0;
   flex-direction: column;
   border-radius: 28px;
+  padding: 1.35rem 1.05rem;
+  overflow: hidden;
+}
+
+.dashboard-sidebar-dark {
   border: 1px solid rgba(51, 65, 85, 0.95);
   background:
     linear-gradient(180deg, rgba(8, 15, 31, 0.98), rgba(10, 18, 34, 0.98)),
     linear-gradient(135deg, rgba(34, 211, 238, 0.08), rgba(129, 140, 248, 0.05));
-  padding: 1.35rem 1.05rem;
-  overflow: hidden;
+}
+
+.dashboard-sidebar-light {
+  border: 1px solid rgba(203, 213, 225, 0.9);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(244, 247, 251, 0.95)),
+    linear-gradient(135deg, rgba(45, 212, 191, 0.06), rgba(59, 130, 246, 0.04));
 }
 
 .dashboard-brand {
@@ -221,18 +252,34 @@ body {
   gap: 0.7rem;
   border-radius: 1rem;
   padding: 0.8rem 0.95rem;
-  color: rgba(203, 213, 225, 0.8);
-  background: rgba(15, 23, 42, 0.45);
-  border: 1px solid rgba(51, 65, 85, 0.72);
   font-size: 0.9rem;
   font-weight: 500;
 }
 
+.dashboard-nav-item-dark {
+  color: rgba(203, 213, 225, 0.8);
+  background: rgba(15, 23, 42, 0.45);
+  border: 1px solid rgba(51, 65, 85, 0.72);
+}
+
+.dashboard-nav-item-light {
+  color: rgba(51, 65, 85, 0.88);
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(203, 213, 225, 0.88);
+}
+
 .dashboard-nav-item-active {
-  color: #e0f2fe;
   background: linear-gradient(90deg, rgba(34, 211, 238, 0.18), rgba(99, 102, 241, 0.14));
   border-color: rgba(34, 211, 238, 0.4);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.dashboard-nav-item-dark.dashboard-nav-item-active {
+  color: #e0f2fe;
+}
+
+.dashboard-nav-item-light.dashboard-nav-item-active {
+  color: #0f172a;
 }
 
 .dashboard-nav-dot {
@@ -253,6 +300,10 @@ body {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
+.dashboard-shell-light .dashboard-sidebar-glow {
+  display: none;
+}
+
 .dashboard-topbar,
 .dashboard-filterbar {
   display: flex;
@@ -260,21 +311,43 @@ body {
   gap: 1rem;
   min-width: 0;
   border-radius: 1.7rem;
+  padding: 1.35rem 1.45rem;
+}
+
+.dashboard-topbar-dark,
+.dashboard-filterbar-dark {
   border: 1px solid rgba(51, 65, 85, 0.85);
   background: linear-gradient(180deg, rgba(10, 18, 34, 0.96), rgba(12, 22, 40, 0.95));
-  padding: 1.35rem 1.45rem;
   box-shadow: inset 0 1px 0 rgba(148, 163, 184, 0.06);
+}
+
+.dashboard-topbar-light,
+.dashboard-filterbar-light {
+  border: 1px solid rgba(203, 213, 225, 0.9);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(246, 249, 252, 0.95));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.65),
+    0 18px 50px -36px rgba(15, 23, 42, 0.14);
 }
 
 .dashboard-top-chip {
   border-radius: 999px;
-  border: 1px solid rgba(51, 65, 85, 0.85);
-  background: rgba(15, 23, 42, 0.8);
-  color: #cbd5e1;
   padding: 0.48rem 0.8rem;
   font-size: 0.78rem;
   font-weight: 600;
   white-space: nowrap;
+}
+
+.dashboard-top-chip-dark {
+  border: 1px solid rgba(51, 65, 85, 0.85);
+  background: rgba(15, 23, 42, 0.8);
+  color: #cbd5e1;
+}
+
+.dashboard-top-chip-light {
+  border: 1px solid rgba(203, 213, 225, 0.9);
+  background: rgba(255, 255, 255, 0.8);
+  color: #475569;
 }
 
 .dashboard-metric {
@@ -282,14 +355,24 @@ body {
   overflow: hidden;
   min-width: 0;
   border-radius: 1.55rem;
+  padding: 1.1rem 1.1rem 1.05rem;
+}
+
+.dashboard-metric-dark {
   border: 1px solid rgba(51, 65, 85, 0.8);
   background: linear-gradient(180deg, rgba(10, 18, 34, 0.96), rgba(12, 22, 40, 0.95));
-  padding: 1.1rem 1.1rem 1.05rem;
   box-shadow: inset 0 1px 0 rgba(148, 163, 184, 0.05);
 }
 
+.dashboard-metric-light {
+  border: 1px solid rgba(203, 213, 225, 0.88);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(247, 250, 252, 0.95));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.65),
+    0 16px 44px -36px rgba(15, 23, 42, 0.16);
+}
+
 .dashboard-metric-label {
-  color: rgba(148, 163, 184, 0.74);
   font-size: 0.68rem;
   font-weight: 600;
   letter-spacing: 0.28em;
@@ -298,7 +381,6 @@ body {
 
 .dashboard-metric-value {
   margin-top: 0.55rem;
-  color: #f8fafc;
   font-size: clamp(1.85rem, 2vw, 2.45rem);
   font-weight: 700;
   letter-spacing: -0.03em;
@@ -308,7 +390,6 @@ body {
 
 .dashboard-metric-detail {
   margin-top: 0.35rem;
-  color: rgba(148, 163, 184, 0.75);
   font-size: 0.8rem;
   line-height: 1.35;
 }
@@ -371,7 +452,7 @@ body {
   min-width: 0;
 }
 
-.dashboard-panel .card {
+.dashboard-shell-dark .dashboard-panel .card {
   height: 100%;
   overflow: hidden;
   border-color: rgba(51, 65, 85, 0.84);
@@ -381,27 +462,58 @@ body {
     inset 0 1px 0 rgba(148, 163, 184, 0.05);
 }
 
+.dashboard-shell-light .dashboard-panel .card {
+  height: 100%;
+  overflow: hidden;
+  border-color: rgba(203, 213, 225, 0.88);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(247, 250, 252, 0.95));
+  box-shadow:
+    0 22px 55px -42px rgba(15, 23, 42, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
 .dashboard-table-card thead {
   background: linear-gradient(180deg, rgba(15, 23, 42, 0.98), rgba(17, 24, 39, 0.92));
 }
 
 .dashboard-table-card th {
-  font-size: 0.72rem;
-  letter-spacing: 0.04em;
+  font-size: 0.76rem;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
+  line-height: 1.35;
+  padding-top: 1rem;
+  padding-bottom: 1rem;
 }
 
 .dashboard-table-card td {
-  line-height: 1.45;
+  line-height: 1.5;
+  padding-top: 0.95rem;
+  padding-bottom: 0.95rem;
+  vertical-align: top;
+}
+
+.dashboard-table-card tbody tr {
+  transition:
+    background-color 180ms ease,
+    transform 180ms ease;
+}
+
+.dashboard-table-card tbody tr:hover {
+  background-color: rgba(59, 130, 246, 0.06);
+}
+
+.dashboard-shell-light .dashboard-table-card thead {
+  background: linear-gradient(180deg, rgba(226, 232, 240, 0.95), rgba(241, 245, 249, 0.98));
+}
+
+.dashboard-shell-light .dashboard-table-card th {
+  color: #334155 !important;
 }
 
 .dashboard-select {
   width: 100%;
   min-width: 0;
   border-radius: 1rem;
-  border: 1px solid rgba(51, 65, 85, 0.9);
-  background: rgba(15, 23, 42, 0.8);
-  color: #f8fafc;
   padding: 0.72rem 0.9rem;
   font-size: 0.92rem;
 }
@@ -410,6 +522,18 @@ body {
   outline: none;
   border-color: rgba(34, 211, 238, 0.45);
   box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.08);
+}
+
+.dashboard-select-dark {
+  border: 1px solid rgba(51, 65, 85, 0.9);
+  background: rgba(15, 23, 42, 0.8);
+  color: #f8fafc;
+}
+
+.dashboard-select-light {
+  border: 1px solid rgba(203, 213, 225, 0.9);
+  background: rgba(255, 255, 255, 0.92);
+  color: #0f172a;
 }
 
 @media (min-width: 1024px) {
