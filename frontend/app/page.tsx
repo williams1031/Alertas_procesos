@@ -2,6 +2,7 @@
 
 import { toBlob } from "html-to-image";
 import { ChangeEvent, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import * as XLSX from "xlsx";
 
 type ControlRecord = {
   Responsable: string;
@@ -100,6 +101,44 @@ type PreviewResponse = {
     hallazgo: string[];
     resultado: string[];
   };
+  casos_inicial_recuperacion_records: {
+    N: string;
+    "Actividad economica": string;
+    Nombre: string;
+    Direccion: string;
+    Localidad: string;
+    Barrio: string;
+    "Cuenta contrato": string;
+    Aviso: string;
+    Fecha: string;
+    "Lectura intervencion m3": string;
+    "Personal visita": string;
+    "Hallazgos encontrados": string;
+    "Deuda 2025": string;
+    "Ultima lectura": string;
+    "Situacion predio": string;
+    "Surtido predio": string;
+    "Volumen recuperado": string;
+    "Valor recuperado": string;
+    "Estado deuda": string;
+    "Liquidacion m3": string;
+    "Liquidacion $": string;
+    "Accion operativa": string;
+    "Accion administrativa": string;
+    "Accion penal": string;
+    Observaciones: string;
+    "Acto de suspension": string;
+    "Avisos reincidencia": string;
+    "Observaciones reincidencia": string;
+  }[];
+  casos_inicial_recuperacion_filter_options: {
+    localidad: string[];
+    barrio: string[];
+    hallazgo: string[];
+    situacion: string[];
+    accion_administrativa: string[];
+    estado_deuda: string[];
+  };
 };
 
 type SharepointDiagnosticResponse = {
@@ -175,6 +214,39 @@ function normalizeForSearch(value: string | number | null | undefined) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .trim();
+}
+
+function parseLocaleNumber(value: string | number | null | undefined) {
+  const text = String(value ?? "").trim();
+  const normalized = normalizeForSearch(text);
+  if (!text || ["nan", "none", "null", "n/a", "na", "-", "pendiente"].includes(normalized)) return null;
+  const cleaned = text
+    .replace(/\$/g, "")
+    .replace(/cop/gi, "")
+    .replace(/m3/gi, "")
+    .replace(/\s+/g, "");
+  let parsed = cleaned;
+  if (parsed.includes(",") && parsed.includes(".")) {
+    if (parsed.lastIndexOf(",") > parsed.lastIndexOf(".")) {
+      parsed = parsed.replace(/\./g, "").replace(",", ".");
+    } else {
+      parsed = parsed.replace(/,/g, "");
+    }
+  } else if (parsed.includes(",")) {
+    parsed = parsed.replace(",", ".");
+  }
+  const valueNumber = Number(parsed);
+  return Number.isFinite(valueNumber) ? valueNumber : null;
+}
+
+function hasMeaningfulValue(value: string | number | null | undefined) {
+  const normalized = normalizeForSearch(value);
+  return Boolean(normalized) && !["nan", "none", "null", "n/a", "na", "-", "undefined"].includes(normalized);
+}
+
+function isNoApplyValue(value: string | number | null | undefined) {
+  const normalized = normalizeForSearch(value);
+  return normalized.includes("no aplica") || normalized === "pendiente";
 }
 
 function compactDayColumns(days: number[]) {
@@ -760,6 +832,7 @@ function MultiSelectFilter({ label, options, selected, onChange, darkMode }: Mul
 export default function HomePage() {
   const [baseMode, setBaseMode] = useState<BaseMode | null>(null);
   const [file, setFile] = useState<File | null>(null);
+  const [localSheetOptions, setLocalSheetOptions] = useState<string[]>([]);
   const [sharepointUrl, setSharepointUrl] = useState("");
   const [sheetName, setSheetName] = useState(DEFAULT_SHEET_BY_MODE.administrativa);
   const [loading, setLoading] = useState(false);
@@ -780,6 +853,12 @@ export default function HomePage() {
   const [casosLocalidadFilter, setCasosLocalidadFilter] = useState("Todos");
   const [casosHallazgoFilter, setCasosHallazgoFilter] = useState("Todos");
   const [casosResultadoFilter, setCasosResultadoFilter] = useState("Todos");
+  const [casosInicialLocalidadFilter, setCasosInicialLocalidadFilter] = useState("Todos");
+  const [casosInicialBarrioFilter, setCasosInicialBarrioFilter] = useState("Todos");
+  const [casosInicialHallazgoFilter, setCasosInicialHallazgoFilter] = useState("Todos");
+  const [casosInicialSituacionFilter, setCasosInicialSituacionFilter] = useState("Todos");
+  const [casosInicialAccionAdminFilter, setCasosInicialAccionAdminFilter] = useState("Todos");
+  const [casosInicialEstadoDeudaFilter, setCasosInicialEstadoDeudaFilter] = useState("Todos");
 
   useEffect(() => {
     const enabled = window.localStorage.getItem("dark_mode") === "1";
@@ -803,6 +882,12 @@ export default function HomePage() {
     setCasosLocalidadFilter("Todos");
     setCasosHallazgoFilter("Todos");
     setCasosResultadoFilter("Todos");
+    setCasosInicialLocalidadFilter("Todos");
+    setCasosInicialBarrioFilter("Todos");
+    setCasosInicialHallazgoFilter("Todos");
+    setCasosInicialSituacionFilter("Todos");
+    setCasosInicialAccionAdminFilter("Todos");
+    setCasosInicialEstadoDeudaFilter("Todos");
   }, [data, baseMode]);
 
   const requestPreview = (formData: FormData) =>
@@ -826,7 +911,7 @@ export default function HomePage() {
       };
 
       xhr.upload.onload = () => {
-        setLoadingStage("Leyendo hoja y construyendo tableros de pendientes...");
+        setLoadingStage("Leyendo hoja y construyendo el análisis...");
         setLoadingProgress((prev) => Math.max(prev, 70));
         processingTimer = window.setInterval(() => {
           setLoadingProgress((prev) => {
@@ -995,15 +1080,35 @@ export default function HomePage() {
     }
   };
 
-  const onFileChange = (event: ChangeEvent<HTMLInputElement>) => {
-    setFile(event.target.files?.[0] ?? null);
+  const onFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const nextFile = event.target.files?.[0] ?? null;
+    setFile(nextFile);
     setError(null);
+
+    if (!nextFile) {
+      setLocalSheetOptions([]);
+      return;
+    }
+
+    try {
+      const buffer = await nextFile.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: "array" });
+      const sheetNames = workbook.SheetNames ?? [];
+      setLocalSheetOptions(sheetNames);
+      if (sheetNames.length > 0) {
+        const preferred = sheetNames.find((item) => normalizeForSearch(item) === normalizeForSearch(sheetName));
+        setSheetName(preferred ?? sheetNames[0]);
+      }
+    } catch {
+      setLocalSheetOptions([]);
+    }
   };
 
   const onSelectBaseMode = (mode: BaseMode) => {
     setBaseMode(mode);
     setSheetName(DEFAULT_SHEET_BY_MODE[mode]);
     setFile(null);
+    setLocalSheetOptions([]);
     setSharepointUrl("");
     setData(null);
     setError(null);
@@ -1023,6 +1128,48 @@ export default function HomePage() {
   const medidoresTotal = data?.medidores_total ?? 0;
   const casosEspecialesRecords = data?.casos_especiales_records ?? [];
   const casosEspecialesSeguimientos = data?.casos_especiales_seguimientos ?? [];
+  const casosInicialRecuperacionRecords = useMemo(() => {
+    const rawRows = data?.casos_inicial_recuperacion_records ?? [];
+    const getValue = (row: Record<string, string>, candidates: string[]) => {
+      for (const candidate of candidates) {
+        const value = row[candidate];
+        if (value !== undefined && value !== null && String(value).trim() !== "") {
+          return String(value).trim();
+        }
+      }
+      return "";
+    };
+    return rawRows.map((row) => ({
+      "N°": getValue(row as unknown as Record<string, string>, ["N°", "N", "N?", "No"]),
+      "Actividad económica": getValue(row as unknown as Record<string, string>, ["Actividad económica", "Actividad economica", "Actividad econ?mica"]),
+      Nombre: getValue(row as unknown as Record<string, string>, ["Nombre"]),
+      Dirección: getValue(row as unknown as Record<string, string>, ["Dirección", "Direccion", "Direcci?n"]),
+      Localidad: getValue(row as unknown as Record<string, string>, ["Localidad"]),
+      Barrio: getValue(row as unknown as Record<string, string>, ["Barrio"]),
+      "Cuenta contrato": getValue(row as unknown as Record<string, string>, ["Cuenta contrato"]),
+      Aviso: getValue(row as unknown as Record<string, string>, ["Aviso"]),
+      Fecha: getValue(row as unknown as Record<string, string>, ["Fecha"]),
+      "Lectura intervención m3": getValue(row as unknown as Record<string, string>, ["Lectura intervención m3", "Lectura intervencion m3", "Lectura intervenci?n m3"]),
+      "Personal visita": getValue(row as unknown as Record<string, string>, ["Personal visita"]),
+      "Hallazgos encontrados": getValue(row as unknown as Record<string, string>, ["Hallazgos encontrados"]),
+      "Deuda 2025": getValue(row as unknown as Record<string, string>, ["Deuda 2025"]),
+      "Última lectura": getValue(row as unknown as Record<string, string>, ["Última lectura", "Ultima lectura", "?ltima lectura"]),
+      "Situación predio": getValue(row as unknown as Record<string, string>, ["Situación predio", "Situacion predio", "Situaci?n predio"]),
+      "Surtido predio": getValue(row as unknown as Record<string, string>, ["Surtido predio"]),
+      "Volumen recuperado": getValue(row as unknown as Record<string, string>, ["Volumen recuperado"]),
+      "Valor recuperado": getValue(row as unknown as Record<string, string>, ["Valor recuperado"]),
+      "Estado deuda": getValue(row as unknown as Record<string, string>, ["Estado deuda"]),
+      "Liquidación m3": getValue(row as unknown as Record<string, string>, ["Liquidación m3", "Liquidacion m3", "Liquidaci?n m3"]),
+      "Liquidación $": getValue(row as unknown as Record<string, string>, ["Liquidación $", "Liquidacion $", "Liquidaci?n $"]),
+      "Acción operativa": getValue(row as unknown as Record<string, string>, ["Acción operativa", "Accion operativa", "Acci?n operativa"]),
+      "Acción administrativa": getValue(row as unknown as Record<string, string>, ["Acción administrativa", "Accion administrativa", "Acci?n administrativa"]),
+      "Acción penal": getValue(row as unknown as Record<string, string>, ["Acción penal", "Accion penal", "Acci?n penal"]),
+      Observaciones: getValue(row as unknown as Record<string, string>, ["Observaciones"]),
+      "Acto de suspensión": getValue(row as unknown as Record<string, string>, ["Acto de suspensión", "Acto de suspension", "Acto de suspensi?n"]),
+      "Avisos reincidencia": getValue(row as unknown as Record<string, string>, ["Avisos reincidencia"]),
+      "Observaciones reincidencia": getValue(row as unknown as Record<string, string>, ["Observaciones reincidencia"]),
+    }));
+  }, [data?.casos_inicial_recuperacion_records]);
   const casosEspecialesFilterOptions = data?.casos_especiales_filter_options ?? {
     zona: [],
     localidad: [],
@@ -1030,8 +1177,25 @@ export default function HomePage() {
     hallazgo: [],
     resultado: [],
   };
+  const casosInicialRecuperacionFilterOptions = data?.casos_inicial_recuperacion_filter_options ?? {
+    localidad: [],
+    barrio: [],
+    hallazgo: [],
+    situacion: [],
+    accion_administrativa: [],
+    estado_deuda: [],
+  };
   const isMedidoresMode = baseMode === "medidores";
   const isCasosEspecialesMode = baseMode === "casos_especiales";
+  const isCasosInicialRecuperacionMode = useMemo(() => {
+    if (!isCasosEspecialesMode) return false;
+    const normalizedSheet = normalizeForSearch(data?.sheet_used ?? "").replace("1.", "1 ").replace(/-/g, " ");
+    return normalizedSheet.startsWith("1 visita inicial");
+  }, [data?.sheet_used, isCasosEspecialesMode]);
+  const sheetOptions = useMemo(
+    () => (localSheetOptions.length > 0 ? localSheetOptions : data?.available_sheets ?? []),
+    [localSheetOptions, data?.available_sheets]
+  );
 
   const estatusOptions = useMemo(() => {
     return data?.all_estatus_options ?? [];
@@ -1388,6 +1552,344 @@ export default function HomePage() {
     [filteredCasosRecords]
   );
 
+  const filteredCasosInicialRecuperacion = useMemo(() => {
+    return casosInicialRecuperacionRecords.filter((row) => {
+      if (casosInicialLocalidadFilter !== "Todos" && normalizeForSearch(row.Localidad) !== normalizeForSearch(casosInicialLocalidadFilter)) return false;
+      if (casosInicialBarrioFilter !== "Todos" && normalizeForSearch(row.Barrio) !== normalizeForSearch(casosInicialBarrioFilter)) return false;
+      if (casosInicialHallazgoFilter !== "Todos" && normalizeForSearch(row["Hallazgos encontrados"]) !== normalizeForSearch(casosInicialHallazgoFilter)) return false;
+      if (casosInicialSituacionFilter !== "Todos" && normalizeForSearch(row["Situación predio"]) !== normalizeForSearch(casosInicialSituacionFilter)) return false;
+      if (casosInicialAccionAdminFilter !== "Todos" && normalizeForSearch(row["Acción administrativa"]) !== normalizeForSearch(casosInicialAccionAdminFilter)) return false;
+      if (casosInicialEstadoDeudaFilter !== "Todos" && normalizeForSearch(row["Estado deuda"]) !== normalizeForSearch(casosInicialEstadoDeudaFilter)) return false;
+      return true;
+    });
+  }, [
+    casosInicialRecuperacionRecords,
+    casosInicialLocalidadFilter,
+    casosInicialBarrioFilter,
+    casosInicialHallazgoFilter,
+    casosInicialSituacionFilter,
+    casosInicialAccionAdminFilter,
+    casosInicialEstadoDeudaFilter
+  ]);
+
+  const casosInicialHallazgoChart = useMemo(
+    () => buildCaseCounts(filteredCasosInicialRecuperacion as unknown as Record<string, string>[], "Hallazgos encontrados"),
+    [filteredCasosInicialRecuperacion]
+  );
+  const casosInicialLocalidadChart = useMemo(
+    () => buildCaseCounts(filteredCasosInicialRecuperacion as unknown as Record<string, string>[], "Localidad"),
+    [filteredCasosInicialRecuperacion]
+  );
+  const casosInicialEstadoDeudaChart = useMemo(
+    () => buildCaseCounts(filteredCasosInicialRecuperacion as unknown as Record<string, string>[], "Estado deuda"),
+    [filteredCasosInicialRecuperacion]
+  );
+  const casosInicialActividadChart = useMemo(
+    () => buildCaseCounts(filteredCasosInicialRecuperacion as unknown as Record<string, string>[], "Actividad económica"),
+    [filteredCasosInicialRecuperacion]
+  );
+  const casosInicialAccionAdminChart = useMemo(
+    () => buildCaseCounts(filteredCasosInicialRecuperacion as unknown as Record<string, string>[], "Acción administrativa"),
+    [filteredCasosInicialRecuperacion]
+  );
+  const casosInicialSurtidoChart = useMemo(
+    () => buildCaseCounts(filteredCasosInicialRecuperacion as unknown as Record<string, string>[], "Surtido predio"),
+    [filteredCasosInicialRecuperacion]
+  );
+  const casosInicialRutaChart = useMemo(() => {
+    const summary = new Map<string, number>();
+    filteredCasosInicialRecuperacion.forEach((row) => {
+      const admin = normalizeForSearch(row["Acción administrativa"]);
+      const penal = normalizeForSearch(row["Acción penal"]);
+      let label = "Sin ruta definida";
+      if (admin.includes("procede") || admin.includes("g&u") || admin.includes("acto")) {
+        label = "Ruta administrativa activa";
+      } else if (hasMeaningfulValue(row["Acción penal"]) && !isNoApplyValue(row["Acción penal"])) {
+        label = "Ruta penal activa";
+      } else if (hasMeaningfulValue(row["Acción operativa"]) && !isNoApplyValue(row["Acción operativa"])) {
+        label = "Ruta operativa";
+      } else if (penal.includes("fiscalia") || penal.includes("audiencia")) {
+        label = "Ruta penal activa";
+      }
+      summary.set(label, (summary.get(label) ?? 0) + 1);
+    });
+    return Array.from(summary.entries())
+      .map(([label, count]) => ({ label, count }))
+      .sort((a, b) => b.count - a.count);
+  }, [filteredCasosInicialRecuperacion]);
+  const casosInicialSituacionChart = useMemo(
+    () => buildCaseCounts(filteredCasosInicialRecuperacion as unknown as Record<string, string>[], "Situación predio"),
+    [filteredCasosInicialRecuperacion]
+  );
+  const casosInicialAccionOperativaChart = useMemo(
+    () => buildCaseCounts(filteredCasosInicialRecuperacion as unknown as Record<string, string>[], "Acción operativa"),
+    [filteredCasosInicialRecuperacion]
+  );
+  const casosInicialVolumenRecuperado = useMemo(
+    () => filteredCasosInicialRecuperacion.reduce((acc, row) => acc + (parseLocaleNumber(row["Volumen recuperado"]) ?? 0), 0),
+    [filteredCasosInicialRecuperacion]
+  );
+  const casosInicialValorRecuperado = useMemo(
+    () => filteredCasosInicialRecuperacion.reduce((acc, row) => acc + (parseLocaleNumber(row["Valor recuperado"]) ?? 0), 0),
+    [filteredCasosInicialRecuperacion]
+  );
+  const casosInicialLiquidacionPesos = useMemo(
+    () => filteredCasosInicialRecuperacion.reduce((acc, row) => acc + (parseLocaleNumber(row["Liquidación $"]) ?? 0), 0),
+    [filteredCasosInicialRecuperacion]
+  );
+  const casosInicialLiquidacionM3 = useMemo(
+    () => filteredCasosInicialRecuperacion.reduce((acc, row) => acc + (parseLocaleNumber(row["Liquidación m3"]) ?? 0), 0),
+    [filteredCasosInicialRecuperacion]
+  );
+  const casosInicialRutaPenalActivaCount = useMemo(
+    () =>
+      filteredCasosInicialRecuperacion.filter((row) => {
+        const penal = normalizeForSearch(row["Acción penal"]);
+        return hasMeaningfulValue(row["Acción penal"]) && !isNoApplyValue(penal);
+      }).length,
+    [filteredCasosInicialRecuperacion]
+  );
+  const casosInicialActoSuspensionCount = useMemo(
+    () =>
+      filteredCasosInicialRecuperacion.filter((row) => {
+        const acto = normalizeForSearch(row["Acto de suspensión"]);
+        return hasMeaningfulValue(row["Acto de suspensión"]) && !acto.startsWith("no");
+      }).length,
+    [filteredCasosInicialRecuperacion]
+  );
+  const casosInicialConRecuperacionCount = useMemo(
+    () =>
+      filteredCasosInicialRecuperacion.filter(
+        (row) =>
+          (parseLocaleNumber(row["Volumen recuperado"]) ?? 0) > 0 ||
+          (parseLocaleNumber(row["Valor recuperado"]) ?? 0) > 0 ||
+          (parseLocaleNumber(row["Liquidación $"]) ?? 0) > 0
+      ).length,
+    [filteredCasosInicialRecuperacion]
+  );
+  const casosInicialRutaJuridicaCount = useMemo(
+    () =>
+      filteredCasosInicialRecuperacion.filter((row) => {
+        const admin = normalizeForSearch(row["Acción administrativa"]);
+        const penal = normalizeForSearch(row["Acción penal"]);
+        return (
+          admin.includes("procede") ||
+          admin.includes("g&u") ||
+          admin.includes("acto") ||
+          penal.includes("fiscalia") ||
+          penal.includes("audiencia") ||
+          (hasMeaningfulValue(row["Acción penal"]) && !isNoApplyValue(row["Acción penal"]))
+        );
+      }).length,
+    [filteredCasosInicialRecuperacion]
+  );
+  const casosInicialSinRecuperarCount = useMemo(
+    () => filteredCasosInicialRecuperacion.filter((row) => normalizeForSearch(row["Estado deuda"]).includes("sin recuperar")).length,
+    [filteredCasosInicialRecuperacion]
+  );
+  const casosInicialReincidentesCount = useMemo(
+    () =>
+      filteredCasosInicialRecuperacion.filter(
+        (row) => hasMeaningfulValue(row["Avisos reincidencia"]) || hasMeaningfulValue(row["Observaciones reincidencia"])
+      ).length,
+    [filteredCasosInicialRecuperacion]
+  );
+  const casosInicialCriticosCount = useMemo(
+    () =>
+      filteredCasosInicialRecuperacion.filter((row) => {
+        const hallazgo = normalizeForSearch(row["Hallazgos encontrados"]);
+        const observaciones = normalizeForSearch(row.Observaciones);
+        const reincidencia = normalizeForSearch(row["Observaciones reincidencia"]);
+        return (
+          hallazgo.includes("bypass") ||
+          hallazgo.includes("clandestina") ||
+          hallazgo.includes("fraudulenta") ||
+          hallazgo.includes("uso no autorizado") ||
+          observaciones.includes("policia") ||
+          observaciones.includes("inspeccion") ||
+          reincidencia.includes("reincid") ||
+          reincidencia.includes("ampliara") ||
+          reincidencia.includes("denuncia")
+        );
+      }).length,
+    [filteredCasosInicialRecuperacion]
+  );
+  const casosInicialPenalChart = useMemo(() => {
+    const labels = new Map<string, number>();
+    filteredCasosInicialRecuperacion.forEach((row) => {
+      const penal = normalizeForSearch(row["Acción penal"]);
+      let label = "Sin gestión penal";
+      if (penal.includes("fiscalia") || penal.includes("audiencia") || (hasMeaningfulValue(row["Acción penal"]) && !isNoApplyValue(penal))) {
+        label = "Gestión penal activa";
+      } else if (isNoApplyValue(penal)) {
+        label = "No aplica";
+      }
+      labels.set(label, (labels.get(label) ?? 0) + 1);
+    });
+    return Array.from(labels.entries()).map(([label, count]) => ({ label, count })).sort((a, b) => b.count - a.count);
+  }, [filteredCasosInicialRecuperacion]);
+  const casosInicialSuspensionChart = useMemo(() => {
+    const labels = new Map<string, number>();
+    filteredCasosInicialRecuperacion.forEach((row) => {
+      const acto = normalizeForSearch(row["Acto de suspensión"]);
+      const label =
+        hasMeaningfulValue(row["Acto de suspensión"]) && !acto.startsWith("no")
+          ? "Con acto de suspensión"
+          : "Sin acto de suspensión";
+      labels.set(label, (labels.get(label) ?? 0) + 1);
+    });
+    return Array.from(labels.entries()).map(([label, count]) => ({ label, count }));
+  }, [filteredCasosInicialRecuperacion]);
+  const casosInicialRecuperacionBucketChart = useMemo(() => {
+    const labels = new Map<string, number>();
+    filteredCasosInicialRecuperacion.forEach((row) => {
+      const value = parseLocaleNumber(row["Liquidación $"]) ?? parseLocaleNumber(row["Valor recuperado"]) ?? 0;
+      let label = "Sin valor económico";
+      if (value > 250000000) label = "Mayor a 250M";
+      else if (value > 100000000) label = "100M a 250M";
+      else if (value > 25000000) label = "25M a 100M";
+      else if (value > 0) label = "1 a 25M";
+      labels.set(label, (labels.get(label) ?? 0) + 1);
+    });
+    return Array.from(labels.entries()).map(([label, count]) => ({ label, count }));
+  }, [filteredCasosInicialRecuperacion]);
+  const casosInicialPendientesAccionRows = useMemo(
+    () =>
+      filteredCasosInicialRecuperacion
+        .filter((row) => {
+          const accionAdmin = normalizeForSearch(row["Acción administrativa"]);
+          const accionPenal = normalizeForSearch(row["Acción penal"]);
+          const accionOperativa = normalizeForSearch(row["Acción operativa"]);
+          const observaciones = normalizeForSearch(row.Observaciones);
+          return (
+            !hasMeaningfulValue(row["Acción administrativa"]) ||
+            !hasMeaningfulValue(row["Acción penal"]) ||
+            !hasMeaningfulValue(row["Acción operativa"]) ||
+            isNoApplyValue(accionAdmin) ||
+            isNoApplyValue(accionPenal) ||
+            isNoApplyValue(accionOperativa) ||
+            observaciones.includes("coordinar") ||
+            observaciones.includes("solicitar") ||
+            observaciones.includes("programar") ||
+            observaciones.includes("nuevo operativo")
+          );
+        })
+        .map((row) => ({
+          "Cuenta contrato": row["Cuenta contrato"],
+          Nombre: row.Nombre,
+          Localidad: row.Localidad,
+          Barrio: row.Barrio,
+          Hallazgo: row["Hallazgos encontrados"],
+          "Acción operativa": row["Acción operativa"] || "Pendiente",
+          "Acción administrativa": row["Acción administrativa"] || "Pendiente",
+          "Acción penal": row["Acción penal"] || "Pendiente",
+          Observaciones: row.Observaciones || "-",
+        })),
+    [filteredCasosInicialRecuperacion]
+  );
+  const casosInicialTopRecuperacionRows = useMemo(
+    () =>
+      filteredCasosInicialRecuperacion
+        .map((row) => ({
+          "Cuenta contrato": row["Cuenta contrato"],
+          Nombre: row.Nombre,
+          Localidad: row.Localidad,
+          Hallazgo: row["Hallazgos encontrados"],
+          "Volumen recuperado (m3)": parseLocaleNumber(row["Volumen recuperado"]) ?? 0,
+          "Valor recuperado (COP)": parseLocaleNumber(row["Valor recuperado"]) ?? 0,
+          "Liquidación ($)": parseLocaleNumber(row["Liquidación $"]) ?? 0,
+        }))
+        .sort((a, b) => Number(b["Valor recuperado (COP)"]) - Number(a["Valor recuperado (COP)"]))
+        .slice(0, 12),
+    [filteredCasosInicialRecuperacion]
+  );
+  const casosInicialMesaEconomicaRows = useMemo(
+    () =>
+      filteredCasosInicialRecuperacion
+        .map((row) => ({
+          "Cuenta contrato": row["Cuenta contrato"],
+          Nombre: row.Nombre,
+          Localidad: row.Localidad,
+          Hallazgo: row["Hallazgos encontrados"],
+          "Estado deuda": row["Estado deuda"] || "-",
+          "Liquidación ($)": parseLocaleNumber(row["Liquidación $"]) ?? 0,
+          "Volumen recuperado": parseLocaleNumber(row["Volumen recuperado"]) ?? 0,
+        }))
+        .sort((a, b) => Number(b["Liquidación ($)"]) - Number(a["Liquidación ($)"]))
+        .slice(0, 12),
+    [filteredCasosInicialRecuperacion]
+  );
+  const casosInicialRutaJuridicaRows = useMemo(
+    () =>
+      filteredCasosInicialRecuperacion
+        .filter((row) => {
+          const admin = normalizeForSearch(row["Acción administrativa"]);
+          const penal = normalizeForSearch(row["Acción penal"]);
+          return (
+            admin.includes("procede") ||
+            admin.includes("g&u") ||
+            admin.includes("acto") ||
+            penal.includes("fiscalia") ||
+            penal.includes("audiencia") ||
+            (hasMeaningfulValue(row["Acción penal"]) && !isNoApplyValue(row["Acción penal"]))
+          );
+        })
+        .map((row) => ({
+          "Cuenta contrato": row["Cuenta contrato"],
+          Nombre: row.Nombre,
+          Hallazgo: row["Hallazgos encontrados"],
+          "Acción administrativa": row["Acción administrativa"] || "-",
+          "Acción penal": row["Acción penal"] || "-",
+          Observaciones: row.Observaciones || "-",
+        }))
+        .slice(0, 12),
+    [filteredCasosInicialRecuperacion]
+  );
+  const casosInicialReincidenciaRows = useMemo(
+    () =>
+      filteredCasosInicialRecuperacion
+        .filter((row) => hasMeaningfulValue(row["Avisos reincidencia"]) || hasMeaningfulValue(row["Observaciones reincidencia"]))
+        .map((row) => ({
+          "Cuenta contrato": row["Cuenta contrato"],
+          Nombre: row.Nombre,
+          Hallazgo: row["Hallazgos encontrados"],
+          "Avisos reincidencia": row["Avisos reincidencia"] || "-",
+          "Observaciones reincidencia": row["Observaciones reincidencia"] || "-",
+          "Acto de suspensión": row["Acto de suspensión"] || "-",
+        }))
+        .slice(0, 12),
+    [filteredCasosInicialRecuperacion]
+  );
+  const casosInicialCriticosRows = useMemo(
+    () =>
+      filteredCasosInicialRecuperacion
+        .filter((row) => {
+          const hallazgo = normalizeForSearch(row["Hallazgos encontrados"]);
+          const observaciones = normalizeForSearch(row.Observaciones);
+          const reincidencia = normalizeForSearch(row["Observaciones reincidencia"]);
+          return (
+            hallazgo.includes("bypass") ||
+            hallazgo.includes("clandestina") ||
+            hallazgo.includes("fraudulenta") ||
+            hallazgo.includes("uso no autorizado") ||
+            observaciones.includes("policia") ||
+            observaciones.includes("inspeccion") ||
+            reincidencia.includes("reincid") ||
+            reincidencia.includes("denuncia")
+          );
+        })
+        .map((row) => ({
+          "Cuenta contrato": row["Cuenta contrato"],
+          Nombre: row.Nombre,
+          Localidad: row.Localidad,
+          Hallazgo: row["Hallazgos encontrados"],
+          "Estado deuda": row["Estado deuda"] || "-",
+          Observaciones: row.Observaciones || "-",
+        }))
+        .slice(0, 12),
+    [filteredCasosInicialRecuperacion]
+  );
+
   return (
     <main className="relative mx-auto min-h-screen max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
       <div className="pointer-events-none fixed inset-0 -z-10">
@@ -1517,7 +2019,17 @@ export default function HomePage() {
               </div>
               <div className="sm:col-span-3">
                 <label className={`mb-2 block text-sm font-medium ${darkMode ? "text-slate-200" : "text-slate-700"}`}>Nombre de hoja</label>
-                <input type="text" value={sheetName} onChange={(e) => setSheetName(e.target.value)} className={`block w-full rounded-xl border px-3 py-2 text-sm ${darkMode ? "border-slate-700 bg-slate-900/70 text-slate-100" : "border-slate-300 text-slate-800"}`} />
+                {sheetOptions.length > 0 ? (
+                  <select value={sheetName} onChange={(e) => setSheetName(e.target.value)} className={`block w-full rounded-xl border px-3 py-2 text-sm ${darkMode ? "border-slate-700 bg-slate-900/70 text-slate-100" : "border-slate-300 text-slate-800"}`}>
+                    {sheetOptions.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input type="text" value={sheetName} onChange={(e) => setSheetName(e.target.value)} className={`block w-full rounded-xl border px-3 py-2 text-sm ${darkMode ? "border-slate-700 bg-slate-900/70 text-slate-100" : "border-slate-300 text-slate-800"}`} />
+                )}
               </div>
               <div className="sm:col-span-12 sm:flex sm:items-end sm:justify-end sm:gap-3">
                 <button type="button" onClick={onDiagnoseSharepoint} disabled={diagnosingSharepoint} className={`w-full sm:w-64 rounded-xl border px-4 py-2.5 text-sm font-semibold transition disabled:opacity-60 ${darkMode ? "border-slate-600 bg-slate-900/70 text-slate-100 hover:bg-slate-800" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"}`}>
@@ -1723,77 +2235,234 @@ export default function HomePage() {
       )}
 
       {data && isCasosEspecialesMode && (
-        <DashboardShell
-          title="Analizador de casos especiales"
-          eyebrow="Centro de seguimiento"
-          description="Vista de vigilancia territorial con filtros, distribución de hallazgos, profundidad de seguimiento y mesas de priorización para revisión operativa."
-          navItems={["Dashboard", "Hallazgos", "Territorio", "Seguimientos", "Criticos"]}
-          darkMode={darkMode}
-          variant="cases"
-        >
-          <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
-            <DashboardMetricCard label="Casos críticos" value={casosCriticosRows.length} accent="rose" detail="Hallazgos u observaciones sensibles" compact darkMode={darkMode} />
-            <DashboardMetricCard label="Sin seguimiento" value={casosSinSeguimientoCount} accent="amber" detail="Casos sin gestión registrada" compact darkMode={darkMode} />
-            <DashboardMetricCard label="Reincidentes" value={casosReincidentesCount} accent="violet" detail="Con más de un seguimiento" compact darkMode={darkMode} />
-            <DashboardMetricCard label="Reprogramados" value={casosReprogramadosCount} accent="fuchsia" detail="Última observación" compact darkMode={darkMode} />
-            <DashboardMetricCard label="Hallazgos sensibles" value={casosHallazgosSensiblesCount} accent="cyan" detail="Bypass, no autorizados y similares" compact darkMode={darkMode} />
+        isCasosInicialRecuperacionMode ? (
+          <section className="space-y-6 reveal-up reveal-delay-2">
+            <section className={`shadow-glow relative overflow-hidden rounded-[34px] border px-8 py-8 ${darkMode ? "border-slate-700/60 bg-[radial-gradient(circle_at_top_left,rgba(251,191,36,0.16),transparent_24%),radial-gradient(circle_at_80%_20%,rgba(14,165,233,0.12),transparent_20%),linear-gradient(135deg,#0f172a_0%,#172033_42%,#1f2937_100%)] text-white" : "border-amber-200/60 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.25),transparent_28%),radial-gradient(circle_at_80%_20%,rgba(251,191,36,0.20),transparent_25%),linear-gradient(135deg,#7c2d12_0%,#92400e_32%,#0f766e_100%)] text-white"}`}>
+              <div className="pointer-events-none absolute -right-16 top-10 h-52 w-52 rounded-full border border-white/10 bg-white/10 blur-3xl" />
+              <div className="pointer-events-none absolute -left-10 bottom-0 h-40 w-40 rounded-full bg-amber-300/10 blur-3xl" />
+              <div className="relative z-10 grid gap-6 xl:grid-cols-[minmax(0,1.25fr)_minmax(320px,0.75fr)]">
+                <div className="flex flex-col justify-between gap-6">
+                  <div>
+                    <p className="text-sm font-medium uppercase tracking-[0.32em] text-amber-100/85">Mesa inicial de recuperación</p>
+                    <h2 className="mt-4 max-w-3xl text-3xl font-bold tracking-tight sm:text-5xl">Recuperación económica, deuda y decisión jurídica en una sola vista</h2>
+                    <p className={`mt-5 max-w-3xl text-sm leading-7 sm:text-base ${darkMode ? "text-slate-300" : "text-amber-50/90"}`}>
+                      Esta hoja se trata como una mesa de recuperación. Resume dinero, volumen, criticidad y ruta de salida para separar lo rentable, lo no recuperado y lo que ya exige escalamiento administrativo o penal.
+                    </p>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <div className={`rounded-[24px] border px-4 py-4 ${darkMode ? "border-white/10 bg-slate-950/30" : "border-white/20 bg-white/10"}`}>
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-amber-100/70">Casos visibles</p>
+                      <p className="mt-2 text-2xl font-bold">{filteredCasosInicialRecuperacion.length}</p>
+                    </div>
+                    <div className={`rounded-[24px] border px-4 py-4 ${darkMode ? "border-white/10 bg-slate-950/30" : "border-white/20 bg-white/10"}`}>
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-amber-100/70">Sin recuperar</p>
+                      <p className="mt-2 text-2xl font-bold">{casosInicialSinRecuperarCount}</p>
+                    </div>
+                    <div className={`rounded-[24px] border px-4 py-4 ${darkMode ? "border-white/10 bg-slate-950/30" : "border-white/20 bg-white/10"}`}>
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-amber-100/70">Con recuperación</p>
+                      <p className="mt-2 text-2xl font-bold">{casosInicialConRecuperacionCount}</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className={`rounded-[28px] border p-5 backdrop-blur-xl sm:col-span-2 ${darkMode ? "border-emerald-300/15 bg-slate-950/35" : "border-white/20 bg-white/10"}`}>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-amber-100/75">Valor económico total</p>
+                    <p className="mt-3 text-[clamp(2rem,3vw,3rem)] font-black leading-none">${casosInicialLiquidacionPesos.toLocaleString("es-CO", { maximumFractionDigits: 0 })}</p>
+                    <div className="mt-4 flex items-center justify-between gap-4 text-sm text-white/80">
+                      <span>Valor recuperado</span>
+                      <span className="font-semibold">${casosInicialValorRecuperado.toLocaleString("es-CO", { maximumFractionDigits: 0 })}</span>
+                    </div>
+                  </div>
+                  <div className={`rounded-[24px] border p-4 backdrop-blur-xl ${darkMode ? "border-cyan-300/15 bg-slate-950/35" : "border-white/20 bg-white/10"}`}>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-amber-100/75">Volumen / liquidación</p>
+                    <p className="mt-3 text-3xl font-bold">{casosInicialVolumenRecuperado.toLocaleString("es-CO", { maximumFractionDigits: 2 })} m3</p>
+                    <p className="mt-2 text-sm text-white/80">Liquidación en m3: {casosInicialLiquidacionM3.toLocaleString("es-CO", { maximumFractionDigits: 2 })}</p>
+                  </div>
+                  <div className={`rounded-[24px] border p-4 backdrop-blur-xl ${darkMode ? "border-fuchsia-300/15 bg-slate-950/35" : "border-white/20 bg-white/10"}`}>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-amber-100/75">Ruta / riesgo</p>
+                    <p className="mt-3 text-3xl font-bold">{casosInicialRutaJuridicaCount}</p>
+                    <p className="mt-2 text-sm text-white/80">{casosInicialCriticosCount} críticos, {casosInicialRutaPenalActivaCount} penales y {casosInicialActoSuspensionCount} con acto</p>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section className="card panel-grid relative overflow-hidden p-6 sm:p-7">
+              <div className={`absolute inset-x-6 top-0 h-px ${darkMode ? "bg-gradient-to-r from-transparent via-amber-300/60 to-transparent" : "bg-gradient-to-r from-transparent via-amber-500/60 to-transparent"}`} />
+              <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+                <div>
+                  <p className={`text-[11px] font-semibold uppercase tracking-[0.28em] ${darkMode ? "text-amber-200/70" : "text-amber-800/70"}`}>Filtro táctico</p>
+                  <h3 className={`mt-2 text-xl font-semibold tracking-tight ${darkMode ? "text-slate-100" : "text-slate-900"}`}>Lectura inicial de recuperación</h3>
+                  <p className={`mt-2 max-w-3xl text-sm leading-6 ${darkMode ? "text-slate-400" : "text-slate-600"}`}>
+                    Separa territorio, hallazgo, situación y deuda para saber dónde hay dinero recuperable, qué casos siguen sin ruta y cuáles ya piden decisión administrativa o penal.
+                  </p>
+                </div>
+                <div className={`grid w-full gap-3 rounded-[24px] border p-4 md:grid-cols-2 xl:max-w-4xl xl:grid-cols-3 ${darkMode ? "border-slate-700/70 bg-slate-950/30" : "border-slate-200 bg-white/70"}`}>
+                  <div>
+                    <label className={`mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Localidad</label>
+                    <select value={casosInicialLocalidadFilter} onChange={(e) => setCasosInicialLocalidadFilter(e.target.value)} className={`dashboard-select ${darkMode ? "dashboard-select-dark" : "dashboard-select-light"}`}>
+                      <option>Todos</option>
+                      {casosInicialRecuperacionFilterOptions.localidad.map((option) => <option key={option} value={option}>{option}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className={`mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Barrio</label>
+                    <select value={casosInicialBarrioFilter} onChange={(e) => setCasosInicialBarrioFilter(e.target.value)} className={`dashboard-select ${darkMode ? "dashboard-select-dark" : "dashboard-select-light"}`}>
+                      <option>Todos</option>
+                      {casosInicialRecuperacionFilterOptions.barrio.map((option) => <option key={option} value={option}>{option}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className={`mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Hallazgo</label>
+                    <select value={casosInicialHallazgoFilter} onChange={(e) => setCasosInicialHallazgoFilter(e.target.value)} className={`dashboard-select ${darkMode ? "dashboard-select-dark" : "dashboard-select-light"}`}>
+                      <option>Todos</option>
+                      {casosInicialRecuperacionFilterOptions.hallazgo.map((option) => <option key={option} value={option}>{option}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className={`mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Situación</label>
+                    <select value={casosInicialSituacionFilter} onChange={(e) => setCasosInicialSituacionFilter(e.target.value)} className={`dashboard-select ${darkMode ? "dashboard-select-dark" : "dashboard-select-light"}`}>
+                      <option>Todos</option>
+                      {casosInicialRecuperacionFilterOptions.situacion.map((option) => <option key={option} value={option}>{option}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className={`mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Acción administrativa</label>
+                    <select value={casosInicialAccionAdminFilter} onChange={(e) => setCasosInicialAccionAdminFilter(e.target.value)} className={`dashboard-select ${darkMode ? "dashboard-select-dark" : "dashboard-select-light"}`}>
+                      <option>Todos</option>
+                      {casosInicialRecuperacionFilterOptions.accion_administrativa.map((option) => <option key={option} value={option}>{option}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className={`mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Estado de deuda</label>
+                    <select value={casosInicialEstadoDeudaFilter} onChange={(e) => setCasosInicialEstadoDeudaFilter(e.target.value)} className={`dashboard-select ${darkMode ? "dashboard-select-dark" : "dashboard-select-light"}`}>
+                      <option>Todos</option>
+                      {casosInicialRecuperacionFilterOptions.estado_deuda.map((option) => <option key={option} value={option}>{option}</option>)}
+                    </select>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section className="grid gap-5 xl:grid-cols-[1.05fr_0.95fr_0.9fr]">
+              <div className="dashboard-panel"><MiniBarChart title="Hallazgos con mayor impacto" data={casosInicialHallazgoChart} darkMode={darkMode} allowWrapLabels /></div>
+              <div className="dashboard-panel"><MiniBarChart title="Estado de deuda y recuperación" data={casosInicialEstadoDeudaChart} darkMode={darkMode} allowWrapLabels /></div>
+              <div className="dashboard-panel"><MiniBarChart title="Bandas económicas" data={casosInicialRecuperacionBucketChart} darkMode={darkMode} allowWrapLabels /></div>
+            </section>
+
+            <section className="grid gap-5 xl:grid-cols-[1.05fr_0.95fr_0.9fr]">
+              <div className="dashboard-panel"><MiniBarChart title="Territorio con mayor presión" data={casosInicialLocalidadChart} darkMode={darkMode} allowWrapLabels /></div>
+              <div className="dashboard-panel"><MiniBarChart title="Decisión administrativa" data={casosInicialAccionAdminChart} darkMode={darkMode} allowWrapLabels /></div>
+              <div className="dashboard-panel"><MiniBarChart title="Gestión penal y suspensión" data={casosInicialPenalChart} darkMode={darkMode} allowWrapLabels /></div>
+            </section>
+
+            <section className="grid gap-5 xl:grid-cols-[1fr_1fr_0.8fr]">
+              <div className="dashboard-panel"><MiniBarChart title="Cómo se surte el predio" data={casosInicialSurtidoChart} darkMode={darkMode} allowWrapLabels /></div>
+              <div className="dashboard-panel"><MiniBarChart title="Acción operativa ejecutada" data={casosInicialAccionOperativaChart} darkMode={darkMode} allowWrapLabels /></div>
+              <div className="dashboard-panel"><MiniBarChart title="Acto de suspensión" data={casosInicialSuspensionChart} darkMode={darkMode} allowWrapLabels /></div>
+            </section>
+
+            <section className="grid gap-5 xl:grid-cols-[1.1fr_0.9fr]">
+              <div className="dashboard-panel">
+                <DataTableCard title="Mesa económica: mayor recuperación y liquidación" rows={casosInicialMesaEconomicaRows} darkMode={darkMode} wrapCells variant="executive" />
+              </div>
+              <div className="dashboard-panel">
+                <DataTableCard title="Casos con recuperación estimada más alta" rows={casosInicialTopRecuperacionRows} darkMode={darkMode} wrapCells variant="executive" />
+              </div>
+            </section>
+
+            <section className="grid gap-5 xl:grid-cols-2">
+              <div className="dashboard-panel">
+                <DataTableCard title="Ruta jurídica y administrativa prioritaria" rows={casosInicialRutaJuridicaRows} darkMode={darkMode} wrapCells variant="executive" />
+              </div>
+              <div className="dashboard-panel">
+                <DataTableCard title="Pendientes de acción operativa, administrativa o penal" rows={casosInicialPendientesAccionRows} darkMode={darkMode} wrapCells variant="executive" />
+              </div>
+            </section>
+
+            <section className="grid gap-5 xl:grid-cols-2">
+              <div className="dashboard-panel">
+                <DataTableCard title="Reincidencias y suspensión sin cierre" rows={casosInicialReincidenciaRows} darkMode={darkMode} wrapCells variant="executive" />
+              </div>
+              <div className="dashboard-panel">
+                <DataTableCard title="Casos críticos para mesa operativa" rows={casosInicialCriticosRows} darkMode={darkMode} wrapCells variant="executive" />
+              </div>
+            </section>
           </section>
+        ) : (
+          <DashboardShell
+            title="Analizador de casos especiales"
+            eyebrow="Centro de seguimiento"
+            description="Vista de vigilancia territorial con filtros, distribución de hallazgos, profundidad de seguimiento y mesas de priorización para revisión operativa."
+            navItems={["Dashboard", "Hallazgos", "Territorio", "Seguimientos", "Criticos"]}
+            darkMode={darkMode}
+            variant="cases"
+          >
+            <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
+              <DashboardMetricCard label="Casos críticos" value={casosCriticosRows.length} accent="rose" detail="Hallazgos u observaciones sensibles" compact darkMode={darkMode} />
+              <DashboardMetricCard label="Sin seguimiento" value={casosSinSeguimientoCount} accent="amber" detail="Casos sin gestión registrada" compact darkMode={darkMode} />
+              <DashboardMetricCard label="Reincidentes" value={casosReincidentesCount} accent="violet" detail="Con más de un seguimiento" compact darkMode={darkMode} />
+              <DashboardMetricCard label="Reprogramados" value={casosReprogramadosCount} accent="fuchsia" detail="Última observación" compact darkMode={darkMode} />
+              <DashboardMetricCard label="Hallazgos sensibles" value={casosHallazgosSensiblesCount} accent="cyan" detail="Bypass, no autorizados y similares" compact darkMode={darkMode} />
+            </section>
 
-          <section className={`dashboard-filterbar ${darkMode ? "dashboard-filterbar-dark" : "dashboard-filterbar-light"}`}>
-            <div>
-              <p className="dashboard-brand-eyebrow">Exploración operativa</p>
-              <h3 className={`mt-2 text-lg font-semibold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>Filtros de casos especiales</h3>
-              <p className={`mt-2 max-w-3xl text-sm leading-6 ${darkMode ? "text-slate-400" : "text-slate-600"}`}>
-                Cruza hallazgos, territorio y resultados para identificar focos, reincidencias y casos que siguen abiertos o reprogramados.
-              </p>
-            </div>
-            <div className="grid w-full gap-3 md:grid-cols-2 xl:grid-cols-4">
-              <select value={casosZonaFilter} onChange={(e) => setCasosZonaFilter(e.target.value)} className={`dashboard-select ${darkMode ? "dashboard-select-dark" : "dashboard-select-light"}`}>
-                <option>Todos</option>
-                {casosEspecialesFilterOptions.zona.map((option) => <option key={option} value={option}>{option}</option>)}
-              </select>
-              <select value={casosLocalidadFilter} onChange={(e) => setCasosLocalidadFilter(e.target.value)} className={`dashboard-select ${darkMode ? "dashboard-select-dark" : "dashboard-select-light"}`}>
-                <option>Todos</option>
-                {casosEspecialesFilterOptions.localidad.map((option) => <option key={option} value={option}>{option}</option>)}
-              </select>
-              <select value={casosHallazgoFilter} onChange={(e) => setCasosHallazgoFilter(e.target.value)} className={`dashboard-select ${darkMode ? "dashboard-select-dark" : "dashboard-select-light"}`}>
-                <option>Todos</option>
-                {casosEspecialesFilterOptions.hallazgo.map((option) => <option key={option} value={option}>{option}</option>)}
-              </select>
-              <select value={casosResultadoFilter} onChange={(e) => setCasosResultadoFilter(e.target.value)} className={`dashboard-select ${darkMode ? "dashboard-select-dark" : "dashboard-select-light"}`}>
-                <option>Todos</option>
-                {casosEspecialesFilterOptions.resultado.map((option) => <option key={option} value={option}>{option}</option>)}
-              </select>
-            </div>
-          </section>
+            <section className={`dashboard-filterbar ${darkMode ? "dashboard-filterbar-dark" : "dashboard-filterbar-light"}`}>
+              <div>
+                <p className="dashboard-brand-eyebrow">Exploración operativa</p>
+                <h3 className={`mt-2 text-lg font-semibold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>Filtros de casos especiales</h3>
+                <p className={`mt-2 max-w-3xl text-sm leading-6 ${darkMode ? "text-slate-400" : "text-slate-600"}`}>
+                  Cruza hallazgos, territorio y resultados para identificar focos, reincidencias y casos que siguen abiertos o reprogramados.
+                </p>
+              </div>
+              <div className="grid w-full gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <select value={casosZonaFilter} onChange={(e) => setCasosZonaFilter(e.target.value)} className={`dashboard-select ${darkMode ? "dashboard-select-dark" : "dashboard-select-light"}`}>
+                  <option>Todos</option>
+                  {casosEspecialesFilterOptions.zona.map((option) => <option key={option} value={option}>{option}</option>)}
+                </select>
+                <select value={casosLocalidadFilter} onChange={(e) => setCasosLocalidadFilter(e.target.value)} className={`dashboard-select ${darkMode ? "dashboard-select-dark" : "dashboard-select-light"}`}>
+                  <option>Todos</option>
+                  {casosEspecialesFilterOptions.localidad.map((option) => <option key={option} value={option}>{option}</option>)}
+                </select>
+                <select value={casosHallazgoFilter} onChange={(e) => setCasosHallazgoFilter(e.target.value)} className={`dashboard-select ${darkMode ? "dashboard-select-dark" : "dashboard-select-light"}`}>
+                  <option>Todos</option>
+                  {casosEspecialesFilterOptions.hallazgo.map((option) => <option key={option} value={option}>{option}</option>)}
+                </select>
+                <select value={casosResultadoFilter} onChange={(e) => setCasosResultadoFilter(e.target.value)} className={`dashboard-select ${darkMode ? "dashboard-select-dark" : "dashboard-select-light"}`}>
+                  <option>Todos</option>
+                  {casosEspecialesFilterOptions.resultado.map((option) => <option key={option} value={option}>{option}</option>)}
+                </select>
+              </div>
+            </section>
 
-          <section className="grid gap-5 xl:grid-cols-2">
-            <div className="dashboard-panel"><MiniBarChart title="Hallazgos" data={casosHallazgoChart} darkMode={darkMode} allowWrapLabels /></div>
-            <div className="dashboard-panel"><MiniBarChart title="Localidades" data={casosLocalidadChart} darkMode={darkMode} allowWrapLabels /></div>
-            <div className="dashboard-panel"><MiniBarChart title="Resultados" data={casosResultadoChart} darkMode={darkMode} allowWrapLabels /></div>
-            <div className="dashboard-panel"><ObservationChart title="Observaciones" data={casosObservacionChart} darkMode={darkMode} activeEstatus="" allowWrapLabels /></div>
-          </section>
+            <section className="grid gap-5 xl:grid-cols-2">
+              <div className="dashboard-panel"><MiniBarChart title="Hallazgos" data={casosHallazgoChart} darkMode={darkMode} allowWrapLabels /></div>
+              <div className="dashboard-panel"><MiniBarChart title="Localidades" data={casosLocalidadChart} darkMode={darkMode} allowWrapLabels /></div>
+              <div className="dashboard-panel"><MiniBarChart title="Resultados" data={casosResultadoChart} darkMode={darkMode} allowWrapLabels /></div>
+              <div className="dashboard-panel"><ObservationChart title="Observaciones" data={casosObservacionChart} darkMode={darkMode} activeEstatus="" allowWrapLabels /></div>
+            </section>
 
-          <section className="grid gap-5 xl:grid-cols-2">
-            <div className="dashboard-panel"><MiniBarChart title="Barrios" data={casosBarrioChart} darkMode={darkMode} allowWrapLabels /></div>
-            <div className="dashboard-panel"><MiniBarChart title="Intervenciones" data={casosIntervencionChart} darkMode={darkMode} allowWrapLabels /></div>
-            <div className="dashboard-panel"><MiniBarChart title="Profundidad seguimiento" data={casosSeguimientoDepthChart} darkMode={darkMode} allowWrapLabels /></div>
-            <div className="dashboard-panel"><MiniBarChart title="Estado operativo" data={casosEstadoOperativoChart} darkMode={darkMode} allowWrapLabels /></div>
-          </section>
+            <section className="grid gap-5 xl:grid-cols-2">
+              <div className="dashboard-panel"><MiniBarChart title="Barrios" data={casosBarrioChart} darkMode={darkMode} allowWrapLabels /></div>
+              <div className="dashboard-panel"><MiniBarChart title="Intervenciones" data={casosIntervencionChart} darkMode={darkMode} allowWrapLabels /></div>
+              <div className="dashboard-panel"><MiniBarChart title="Profundidad seguimiento" data={casosSeguimientoDepthChart} darkMode={darkMode} allowWrapLabels /></div>
+              <div className="dashboard-panel"><MiniBarChart title="Estado operativo" data={casosEstadoOperativoChart} darkMode={darkMode} allowWrapLabels /></div>
+            </section>
 
-          <div className="dashboard-panel">
-            <DataTableCard title="Resumen ejecutivo de casos especiales" rows={casosResumenRows} darkMode={darkMode} wrapCells variant="executive" />
-          </div>
-
-          <section className="grid gap-5 xl:grid-cols-2">
             <div className="dashboard-panel">
-              <DataTableCard title="Reincidencias y seguimientos recurrentes" rows={casosReincidenciaRows} darkMode={darkMode} wrapCells variant="executive" />
+              <DataTableCard title="Resumen ejecutivo de casos especiales" rows={casosResumenRows} darkMode={darkMode} wrapCells variant="executive" />
             </div>
-            <div className="dashboard-panel">
-              <DataTableCard title="Casos críticos y observaciones sensibles" rows={casosCriticosRows} darkMode={darkMode} wrapCells variant="executive" />
-            </div>
-          </section>
-        </DashboardShell>
+
+            <section className="grid gap-5 xl:grid-cols-2">
+              <div className="dashboard-panel">
+                <DataTableCard title="Reincidencias y seguimientos recurrentes" rows={casosReincidenciaRows} darkMode={darkMode} wrapCells variant="executive" />
+              </div>
+              <div className="dashboard-panel">
+                <DataTableCard title="Casos críticos y observaciones sensibles" rows={casosCriticosRows} darkMode={darkMode} wrapCells variant="executive" />
+              </div>
+            </section>
+          </DashboardShell>
+        )
       )}
 
     </main>

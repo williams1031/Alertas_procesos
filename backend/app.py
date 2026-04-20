@@ -894,6 +894,164 @@ def build_medidores_overview(df: pd.DataFrame) -> dict[str, Any]:
     }
 
 
+def parse_decimal_value(value: Any) -> float | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    normalized = normalize_text(text)
+    if normalized in {"nan", "none", "null", "n/a", "na", "-", "sin dato", "pendiente"}:
+        return None
+    text = (
+        text.replace("$", "")
+        .replace("cop", "")
+        .replace("COP", "")
+        .replace("m3", "")
+        .replace("M3", "")
+        .replace(" ", "")
+    )
+    if "," in text and "." in text:
+        if text.rfind(",") > text.rfind("."):
+            text = text.replace(".", "").replace(",", ".")
+        else:
+            text = text.replace(",", "")
+    elif "," in text:
+        text = text.replace(",", ".")
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def build_casos_inicial_recuperacion_payload(df: pd.DataFrame, target_sheet: str, available_sheets: list[str]) -> dict[str, Any]:
+    working_df = df.copy()
+    raw_columns = [str(c) for c in working_df.columns]
+    normalized_raw = [normalize_text(col) for col in raw_columns]
+
+    if "casos especiales" in normalized_raw:
+        header_values = working_df.iloc[0].tolist()
+        rebuilt_columns: list[str] = []
+        for index, value in enumerate(header_values):
+            text = str(value).strip() if value is not None and not pd.isna(value) else ""
+            rebuilt_columns.append(text or f"Unnamed: {index}")
+        working_df = working_df.iloc[1:].copy()
+        working_df.columns = rebuilt_columns
+
+    working_df = working_df.dropna(how="all").reset_index(drop=True)
+
+    leading_fields = []
+    for candidate in ["N°", "Actividad económica", "Nombre", "Localidad", "Barrio"]:
+        found = find_column(columns=[str(c) for c in working_df.columns], target=candidate)
+        if found:
+            leading_fields.append(found)
+    for field in leading_fields:
+        working_df[field] = working_df[field].ffill()
+
+    columns = [str(c) for c in working_df.columns]
+    column_map = {
+        "N": find_column(columns, "N°") or find_column(columns, "No") or columns[0],
+        "Actividad economica": find_column(columns, "Actividad económica") or find_column(columns, "Actividad economica"),
+        "Nombre": find_column(columns, "Nombre"),
+        "Direccion": find_column(columns, "Direccion") or find_column(columns, "Direccion"),
+        "Localidad": find_column(columns, "Localidad"),
+        "Barrio": find_column(columns, "Barrio"),
+        "Cuenta contrato": find_column(columns, "Cuenta contrato") or find_column(columns, "Cuenta Contrato"),
+        "Aviso": find_column(columns, "Aviso"),
+        "Fecha": find_column(columns, "Fecha"),
+        "Lectura intervencion m3": find_column(columns, "Lectura día de la intervención (m3)") or find_column(columns, "Lectura dia de la intervencion (m3)"),
+        "Personal visita": find_column(columns, "Personal de la visita"),
+        "Hallazgos encontrados": find_column(columns, "Hallazgos encontrados"),
+        "Deuda 2025": find_column(columns, "Deuda 2025") or find_column(columns, "Deuda  2025"),
+        "Ultima lectura": find_column(columns, "Última lectura después del procedimiento") or find_column(columns, "Ultima lectura despues del procedimiento"),
+        "Situacion predio": find_column(columns, "Situación actual del predio") or find_column(columns, "Situacion actual del predio"),
+        "Surtido predio": find_column(columns, "¿Cómo se surte de agua el predio? 24 enero 2025") or find_column(columns, "Como se surte de agua el predio? 24 enero 2025"),
+        "Volumen recuperado": find_column(columns, "Volumen recuperado (m3)") or find_column(columns, "Volumen recuperado o (m3)"),
+        "Valor recuperado": find_column(columns, "Valor recuperado (COP)"),
+        "Estado deuda": find_column(columns, "Estado de la deuda (en mora, pagada, financiada)"),
+        "Liquidacion m3": find_column(columns, "Liquidación en m3") or find_column(columns, "Liquidacion en m3"),
+        "Liquidacion $": find_column(columns, "Liquidación en $") or find_column(columns, "Liquidacion en $"),
+        "Accion operativa": find_column(columns, "Acción operativa") or find_column(columns, "Accion operativa"),
+        "Accion administrativa": find_column(columns, "Acción administrativa") or find_column(columns, "Accion administrativa"),
+        "Accion penal": find_column(columns, "Acción penal") or find_column(columns, "Accion penal"),
+        "Observaciones": find_column(columns, "Observaciones"),
+        "Acto de suspension": find_column(columns, "Acto de suspensión") or find_column(columns, "Acto de suspension"),
+        "Avisos reincidencia": find_column(columns, "Aviso(s) reincidencia") or find_column(columns, "Avisos reincidencia"),
+        "Observaciones reincidencia": find_column(columns, "Observaciones reincidencia"),
+    }
+
+    def safe_text(source_name: str | None, row: pd.Series) -> str:
+        if not source_name:
+            return ""
+        value = row.get(source_name)
+        if isinstance(value, pd.Series):
+            for item in value.tolist():
+                if pd.isna(item):
+                    continue
+                text = str(item).strip()
+                if text:
+                    return text
+            return ""
+        if pd.isna(value):
+            return ""
+        return str(value).strip()
+
+    records: list[dict[str, str]] = []
+    for _, row in working_df.iterrows():
+        item = {key: safe_text(source_col, row) for key, source_col in column_map.items()}
+        if not any(item.values()):
+            continue
+        records.append(item)
+
+    def build_option_values(items: list[dict[str, str]], field: str) -> list[str]:
+        return sorted(
+            {
+                str(item.get(field) or "").strip()
+                for item in items
+                if str(item.get(field) or "").strip()
+                and normalize_text(item.get(field)) not in {"nan", "none", "null", "n/a", "na", "-"}
+            },
+            key=lambda value: value.lower(),
+        )
+
+    return {
+        "sheet_used": target_sheet,
+        "available_sheets": available_sheets,
+        "source_columns": [str(c) for c in working_df.columns],
+        "source_total_rows": len(working_df.index),
+        "all_estatus_options": [],
+        "all_estado_options": [],
+        "chart_records": [],
+        "report_records": [],
+        "source_preview": serialize_for_json(working_df, limit=20),
+        "admin_control_records": [],
+        "penal_control_records": [],
+        "no_procedente_control_records": [],
+        "medidores_total": 0,
+        "medidores_retirado_por": [],
+        "medidores_concepto": [],
+        "medidores_pendientes": [],
+        "medidores_liquidacion_m3": [],
+        "medidores_pendientes_liquidar": 0,
+        "casos_especiales_records": [],
+        "casos_especiales_seguimientos": [],
+        "casos_especiales_filter_options": {
+            "zona": [],
+            "localidad": [],
+            "barrio": [],
+            "hallazgo": [],
+            "resultado": [],
+        },
+        "casos_inicial_recuperacion_records": records,
+        "casos_inicial_recuperacion_filter_options": {
+            "localidad": build_option_values(records, "Localidad"),
+            "barrio": build_option_values(records, "Barrio"),
+            "hallazgo": build_option_values(records, "Hallazgos encontrados"),
+            "situacion": build_option_values(records, "Situacion predio"),
+            "accion_administrativa": build_option_values(records, "Accion administrativa"),
+            "estado_deuda": build_option_values(records, "Estado deuda"),
+        },
+    }
+
+
 def build_administrativa_payload(df: pd.DataFrame, target_sheet: str, available_sheets: list[str]) -> dict[str, Any]:
     return {
         "sheet_used": target_sheet,
@@ -910,6 +1068,28 @@ def build_administrativa_payload(df: pd.DataFrame, target_sheet: str, available_
         "no_procedente_control_records": build_no_procedente_control_records(df),
         "medidores_total": 0,
         "medidores_retirado_por": [],
+        "medidores_concepto": [],
+        "medidores_pendientes": [],
+        "medidores_liquidacion_m3": [],
+        "medidores_pendientes_liquidar": 0,
+        "casos_especiales_records": [],
+        "casos_especiales_seguimientos": [],
+        "casos_especiales_filter_options": {
+            "zona": [],
+            "localidad": [],
+            "barrio": [],
+            "hallazgo": [],
+            "resultado": [],
+        },
+        "casos_inicial_recuperacion_records": [],
+        "casos_inicial_recuperacion_filter_options": {
+            "localidad": [],
+            "barrio": [],
+            "hallazgo": [],
+            "situacion": [],
+            "accion_administrativa": [],
+            "estado_deuda": [],
+        },
     }
 
 
@@ -934,10 +1114,32 @@ def build_medidores_payload(df: pd.DataFrame, target_sheet: str, available_sheet
         "medidores_pendientes": overview["medidores_pendientes"],
         "medidores_liquidacion_m3": overview["medidores_liquidacion_m3"],
         "medidores_pendientes_liquidar": overview["medidores_pendientes_liquidar"],
+        "casos_especiales_records": [],
+        "casos_especiales_seguimientos": [],
+        "casos_especiales_filter_options": {
+            "zona": [],
+            "localidad": [],
+            "barrio": [],
+            "hallazgo": [],
+            "resultado": [],
+        },
+        "casos_inicial_recuperacion_records": [],
+        "casos_inicial_recuperacion_filter_options": {
+            "localidad": [],
+            "barrio": [],
+            "hallazgo": [],
+            "situacion": [],
+            "accion_administrativa": [],
+            "estado_deuda": [],
+        },
     }
 
 
 def build_casos_especiales_payload(df: pd.DataFrame, target_sheet: str, available_sheets: list[str]) -> dict[str, Any]:
+    normalized_sheet = normalize_text(target_sheet).replace("1.", "1 ").replace("-", " ")
+    if normalized_sheet.startswith("1 visita inicial"):
+        return build_casos_inicial_recuperacion_payload(df, target_sheet, available_sheets)
+
     columns = [str(c) for c in df.columns]
 
     base_map = {
@@ -1054,6 +1256,15 @@ def build_casos_especiales_payload(df: pd.DataFrame, target_sheet: str, availabl
             "hallazgo": build_option_values(case_records, "Hallazgo encontrado"),
             "resultado": build_option_values(seguimiento_records, "Resultado"),
         },
+        "casos_inicial_recuperacion_records": [],
+        "casos_inicial_recuperacion_filter_options": {
+            "localidad": [],
+            "barrio": [],
+            "hallazgo": [],
+            "situacion": [],
+            "accion_administrativa": [],
+            "estado_deuda": [],
+        },
     }
 
 
@@ -1101,6 +1312,23 @@ def process_excel_bytes(file_bytes: bytes, sheet_name: str | None, base_mode: st
 
     selected_sheet = sheet_name.strip() if sheet_name else DEFAULT_SHEET
     target_sheet = find_column(available_sheets, selected_sheet)
+    if target_sheet is None:
+        normalized_selected_sheet = normalize_text(selected_sheet).replace("1.", "1 ").replace("-", " ")
+        for candidate in available_sheets:
+            normalized_candidate = normalize_text(candidate).replace("1.", "1 ").replace("-", " ")
+            if normalized_candidate == normalized_selected_sheet:
+                target_sheet = candidate
+                break
+    if target_sheet is None and normalized_mode in {"casos especiales", "casos_especiales"}:
+        normalized_selected_sheet = normalize_text(selected_sheet).replace("?", "").replace("1.", "1 ").replace("-", " ")
+        for candidate in available_sheets:
+            normalized_candidate = normalize_text(candidate).replace("?", "").replace("1.", "1 ").replace("-", " ")
+            if "visita inicial" in normalized_selected_sheet and "visita inicial" in normalized_candidate:
+                target_sheet = candidate
+                break
+            if "visitas seguimiento" in normalized_selected_sheet and "visitas seguimiento" in normalized_candidate:
+                target_sheet = candidate
+                break
     if target_sheet is None:
         if not sheet_name or normalized_mode == "medidores":
             target_sheet = available_sheets[0]
