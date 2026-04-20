@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import { toBlob } from "html-to-image";
-import { ChangeEvent, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 
 type ControlRecord = {
@@ -756,9 +756,34 @@ function MiniBarChart({
 }
 
 function MultiSelectFilter({ label, options, selected, onChange, darkMode }: MultiSelectFilterProps) {
+  const instanceId = useId();
   const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const selectedLabel =
     selected.length === 0 ? "Todos" : selected.length === 1 ? selected[0] : `${selected.length} seleccionados`;
+
+  useEffect(() => {
+    const handleDocumentClick = (event: MouseEvent) => {
+      if (!rootRef.current) return;
+      if (!rootRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+
+    const handleOpenEvent = (event: Event) => {
+      const customEvent = event as CustomEvent<string>;
+      if (customEvent.detail !== instanceId) {
+        setOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleDocumentClick);
+    window.addEventListener("multiselect-open", handleOpenEvent as EventListener);
+    return () => {
+      document.removeEventListener("mousedown", handleDocumentClick);
+      window.removeEventListener("multiselect-open", handleOpenEvent as EventListener);
+    };
+  }, [instanceId]);
 
   const toggleOption = (option: string) => {
     const exists = selected.includes(option);
@@ -770,59 +795,48 @@ function MultiSelectFilter({ label, options, selected, onChange, darkMode }: Mul
   };
 
   return (
-    <div className={`relative ${open ? "z-[120]" : "z-10"}`}>
+    <div ref={rootRef} className={`relative ${open ? "z-[200]" : "z-10"}`}>
       <label className={`mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{label}</label>
       <button
         type="button"
-        onClick={() => setOpen((prev) => !prev)}
-        className={`flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-sm shadow-sm ${darkMode ? "border-slate-700 bg-slate-900/80 text-slate-100" : "border-slate-300 bg-white/90 text-slate-800"}`}
+        onClick={() => {
+          setOpen((prev) => {
+            const next = !prev;
+            if (next) {
+              window.dispatchEvent(new CustomEvent("multiselect-open", { detail: instanceId }));
+            }
+            return next;
+          });
+        }}
+        className={`flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-sm shadow-sm transition ${open ? (darkMode ? "border-amber-300/70 shadow-[0_0_0_3px_rgba(251,191,36,0.10)]" : "border-amber-400/80 shadow-[0_0_0_3px_rgba(245,158,11,0.08)]") : ""} ${darkMode ? "border-slate-700 bg-slate-900/80 text-slate-100 hover:border-slate-500" : "border-slate-300 bg-white/90 text-slate-800 hover:border-slate-400"}`}
       >
         <span className="truncate">{selectedLabel}</span>
-        <span className="ml-3 text-xs">{open ? "▲" : "▼"}</span>
+        <span className={`ml-3 text-[10px] transition ${open ? "rotate-180" : ""}`}>▼</span>
       </button>
-      {selected.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-2">
-          {selected.map((item) => (
-            <button
-              key={item}
-              type="button"
-              onClick={() => toggleOption(item)}
-              className={`rounded-full border px-3 py-1 text-xs ${darkMode ? "border-brand-500 bg-brand-500/20 text-brand-100" : "border-brand-300 bg-brand-50 text-brand-800"}`}
-            >
-              {item} ×
-            </button>
-          ))}
-          <button
-            type="button"
-            onClick={() => onChange([])}
-            className={`rounded-full border px-3 py-1 text-xs ${darkMode ? "border-slate-600 bg-slate-900/80 text-slate-300" : "border-slate-300 bg-white text-slate-700"}`}
-          >
-            Limpiar
-          </button>
-        </div>
-      )}
       {open && (
-        <div className={`absolute left-0 top-full z-[140] mt-2 max-h-72 w-full overflow-auto rounded-[22px] border shadow-2xl ${darkMode ? "border-slate-700 bg-slate-950" : "border-slate-200 bg-white/95"}`}>
+        <div className={`absolute left-0 top-full z-[220] mt-3 max-h-80 w-full overflow-hidden rounded-[22px] border shadow-2xl ${darkMode ? "border-slate-700 bg-slate-950" : "border-slate-200 bg-white"}`}>
           <button
             type="button"
             onClick={() => onChange([])}
-            className={`flex w-full items-center justify-between px-3 py-2 text-left text-sm font-semibold ${darkMode ? "border-b border-slate-800 text-slate-100 hover:bg-slate-900" : "border-b border-slate-200 text-slate-800 hover:bg-slate-50"}`}
+            className={`flex w-full items-center justify-between px-4 py-3 text-left text-sm font-semibold ${darkMode ? "border-b border-slate-800 text-slate-100 hover:bg-slate-900" : "border-b border-slate-200 text-slate-800 hover:bg-slate-50"}`}
           >
             <span>Todos</span>
             {selected.length === 0 && <span>✓</span>}
           </button>
-          {options.map((option) => {
-            const checked = selected.includes(option);
-            return (
-              <label
-                key={option}
-                className={`flex cursor-pointer items-center gap-3 px-3 py-2 text-sm ${darkMode ? "text-slate-200 hover:bg-slate-900" : "text-slate-700 hover:bg-slate-50"}`}
-              >
-                <input type="checkbox" checked={checked} onChange={() => toggleOption(option)} className="h-4 w-4" />
-                <span className="truncate">{option}</span>
-              </label>
-            );
-          })}
+          <div className="max-h-64 overflow-auto py-1">
+            {options.map((option) => {
+              const checked = selected.includes(option);
+              return (
+                <label
+                  key={option}
+                  className={`flex cursor-pointer items-center gap-3 px-4 py-2.5 text-sm ${darkMode ? "text-slate-200 hover:bg-slate-900" : "text-slate-700 hover:bg-slate-50"}`}
+                >
+                  <input type="checkbox" checked={checked} onChange={() => toggleOption(option)} className="h-4 w-4 rounded border-slate-400" />
+                  <span className="min-w-0 flex-1 break-words">{option}</span>
+                </label>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>
@@ -853,12 +867,12 @@ export default function HomePage() {
   const [casosLocalidadFilter, setCasosLocalidadFilter] = useState("Todos");
   const [casosHallazgoFilter, setCasosHallazgoFilter] = useState("Todos");
   const [casosResultadoFilter, setCasosResultadoFilter] = useState("Todos");
-  const [casosInicialLocalidadFilter, setCasosInicialLocalidadFilter] = useState("Todos");
-  const [casosInicialBarrioFilter, setCasosInicialBarrioFilter] = useState("Todos");
-  const [casosInicialHallazgoFilter, setCasosInicialHallazgoFilter] = useState("Todos");
-  const [casosInicialSituacionFilter, setCasosInicialSituacionFilter] = useState("Todos");
-  const [casosInicialAccionAdminFilter, setCasosInicialAccionAdminFilter] = useState("Todos");
-  const [casosInicialEstadoDeudaFilter, setCasosInicialEstadoDeudaFilter] = useState("Todos");
+  const [casosInicialLocalidadFilter, setCasosInicialLocalidadFilter] = useState<string[]>([]);
+  const [casosInicialBarrioFilter, setCasosInicialBarrioFilter] = useState<string[]>([]);
+  const [casosInicialHallazgoFilter, setCasosInicialHallazgoFilter] = useState<string[]>([]);
+  const [casosInicialSituacionFilter, setCasosInicialSituacionFilter] = useState<string[]>([]);
+  const [casosInicialAccionAdminFilter, setCasosInicialAccionAdminFilter] = useState<string[]>([]);
+  const [casosInicialEstadoDeudaFilter, setCasosInicialEstadoDeudaFilter] = useState<string[]>([]);
 
   useEffect(() => {
     const enabled = window.localStorage.getItem("dark_mode") === "1";
@@ -882,12 +896,12 @@ export default function HomePage() {
     setCasosLocalidadFilter("Todos");
     setCasosHallazgoFilter("Todos");
     setCasosResultadoFilter("Todos");
-    setCasosInicialLocalidadFilter("Todos");
-    setCasosInicialBarrioFilter("Todos");
-    setCasosInicialHallazgoFilter("Todos");
-    setCasosInicialSituacionFilter("Todos");
-    setCasosInicialAccionAdminFilter("Todos");
-    setCasosInicialEstadoDeudaFilter("Todos");
+    setCasosInicialLocalidadFilter([]);
+    setCasosInicialBarrioFilter([]);
+    setCasosInicialHallazgoFilter([]);
+    setCasosInicialSituacionFilter([]);
+    setCasosInicialAccionAdminFilter([]);
+    setCasosInicialEstadoDeudaFilter([]);
   }, [data, baseMode]);
 
   const requestPreview = (formData: FormData) =>
@@ -1553,13 +1567,19 @@ export default function HomePage() {
   );
 
   const filteredCasosInicialRecuperacion = useMemo(() => {
+    const matchesMulti = (value: string | number | null | undefined, selected: string[]) => {
+      if (selected.length === 0) return true;
+      const normalizedValue = normalizeForSearch(String(value ?? ""));
+      return selected.some((item) => normalizeForSearch(item) === normalizedValue);
+    };
+
     return casosInicialRecuperacionRecords.filter((row) => {
-      if (casosInicialLocalidadFilter !== "Todos" && normalizeForSearch(row.Localidad) !== normalizeForSearch(casosInicialLocalidadFilter)) return false;
-      if (casosInicialBarrioFilter !== "Todos" && normalizeForSearch(row.Barrio) !== normalizeForSearch(casosInicialBarrioFilter)) return false;
-      if (casosInicialHallazgoFilter !== "Todos" && normalizeForSearch(row["Hallazgos encontrados"]) !== normalizeForSearch(casosInicialHallazgoFilter)) return false;
-      if (casosInicialSituacionFilter !== "Todos" && normalizeForSearch(row["Situación predio"]) !== normalizeForSearch(casosInicialSituacionFilter)) return false;
-      if (casosInicialAccionAdminFilter !== "Todos" && normalizeForSearch(row["Acción administrativa"]) !== normalizeForSearch(casosInicialAccionAdminFilter)) return false;
-      if (casosInicialEstadoDeudaFilter !== "Todos" && normalizeForSearch(row["Estado deuda"]) !== normalizeForSearch(casosInicialEstadoDeudaFilter)) return false;
+      if (!matchesMulti(row.Localidad, casosInicialLocalidadFilter)) return false;
+      if (!matchesMulti(row.Barrio, casosInicialBarrioFilter)) return false;
+      if (!matchesMulti(row["Hallazgos encontrados"], casosInicialHallazgoFilter)) return false;
+      if (!matchesMulti(row["Situación predio"], casosInicialSituacionFilter)) return false;
+      if (!matchesMulti(row["Acción administrativa"], casosInicialAccionAdminFilter)) return false;
+      if (!matchesMulti(row["Estado deuda"], casosInicialEstadoDeudaFilter)) return false;
       return true;
     });
   }, [
@@ -2288,79 +2308,144 @@ export default function HomePage() {
               </div>
             </section>
 
-            <section className="card panel-grid relative overflow-hidden p-6 sm:p-7">
+            <section className="card panel-grid relative z-[80] overflow-visible p-6 sm:p-7">
               <div className={`absolute inset-x-6 top-0 h-px ${darkMode ? "bg-gradient-to-r from-transparent via-amber-300/60 to-transparent" : "bg-gradient-to-r from-transparent via-amber-500/60 to-transparent"}`} />
-              <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
-                <div>
-                  <p className={`text-[11px] font-semibold uppercase tracking-[0.28em] ${darkMode ? "text-amber-200/70" : "text-amber-800/70"}`}>Filtro táctico</p>
-                  <h3 className={`mt-2 text-xl font-semibold tracking-tight ${darkMode ? "text-slate-100" : "text-slate-900"}`}>Lectura inicial de recuperación</h3>
-                  <p className={`mt-2 max-w-3xl text-sm leading-6 ${darkMode ? "text-slate-400" : "text-slate-600"}`}>
-                    Separa territorio, hallazgo, situación y deuda para saber dónde hay dinero recuperable, qué casos siguen sin ruta y cuáles ya piden decisión administrativa o penal.
-                  </p>
+              <div className="grid gap-6 xl:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]">
+                <div className="space-y-4">
+                  <div>
+                    <p className={`text-[11px] font-semibold uppercase tracking-[0.28em] ${darkMode ? "text-amber-200/70" : "text-amber-800/70"}`}>Filtro táctico</p>
+                    <h3 className={`mt-2 text-xl font-semibold tracking-tight ${darkMode ? "text-slate-100" : "text-slate-900"}`}>Lectura inicial de recuperación</h3>
+                    <p className={`mt-2 max-w-2xl text-sm leading-6 ${darkMode ? "text-slate-400" : "text-slate-600"}`}>
+                      Cruza territorio, hallazgo, situación y deuda para ubicar rápido dónde hay recuperación económica, qué casos siguen abiertos y cuáles deben pasar a decisión administrativa o penal.
+                    </p>
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <div className={`rounded-[20px] border px-4 py-3 ${darkMode ? "border-slate-700/70 bg-slate-950/35" : "border-slate-200 bg-white/85"}`}>
+                      <p className={`text-[11px] font-semibold uppercase tracking-[0.24em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Casos visibles</p>
+                      <p className={`mt-2 text-2xl font-bold ${darkMode ? "text-slate-50" : "text-slate-900"}`}>{filteredCasosInicialRecuperacion.length}</p>
+                    </div>
+                    <div className={`rounded-[20px] border px-4 py-3 ${darkMode ? "border-rose-400/20 bg-rose-950/20" : "border-rose-200 bg-rose-50/80"}`}>
+                      <p className={`text-[11px] font-semibold uppercase tracking-[0.24em] ${darkMode ? "text-rose-200/75" : "text-rose-700/75"}`}>Sin recuperar</p>
+                      <p className={`mt-2 text-2xl font-bold ${darkMode ? "text-rose-100" : "text-rose-900"}`}>{casosInicialSinRecuperarCount}</p>
+                    </div>
+                    <div className={`rounded-[20px] border px-4 py-3 ${darkMode ? "border-cyan-400/20 bg-cyan-950/20" : "border-cyan-200 bg-cyan-50/80"}`}>
+                      <p className={`text-[11px] font-semibold uppercase tracking-[0.24em] ${darkMode ? "text-cyan-200/75" : "text-cyan-700/75"}`}>Ruta crítica</p>
+                      <p className={`mt-2 text-2xl font-bold ${darkMode ? "text-cyan-100" : "text-cyan-900"}`}>{casosInicialCriticosCount + casosInicialRutaPenalActivaCount}</p>
+                    </div>
+                  </div>
                 </div>
-                <div className={`grid w-full gap-3 rounded-[24px] border p-4 md:grid-cols-2 xl:max-w-4xl xl:grid-cols-3 ${darkMode ? "border-slate-700/70 bg-slate-950/30" : "border-slate-200 bg-white/70"}`}>
-                  <div>
-                    <label className={`mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Localidad</label>
-                    <select value={casosInicialLocalidadFilter} onChange={(e) => setCasosInicialLocalidadFilter(e.target.value)} className={`dashboard-select ${darkMode ? "dashboard-select-dark" : "dashboard-select-light"}`}>
-                      <option>Todos</option>
-                      {casosInicialRecuperacionFilterOptions.localidad.map((option) => <option key={option} value={option}>{option}</option>)}
-                    </select>
+
+                <div className={`rounded-[26px] border p-4 sm:p-5 ${darkMode ? "border-slate-700/70 bg-slate-950/35" : "border-slate-200 bg-white/80"}`}>
+                  <div className="mb-4 flex items-center justify-between gap-3">
+                    <p className={`text-[11px] font-semibold uppercase tracking-[0.24em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Selección múltiple</p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCasosInicialLocalidadFilter([]);
+                        setCasosInicialBarrioFilter([]);
+                        setCasosInicialHallazgoFilter([]);
+                        setCasosInicialSituacionFilter([]);
+                        setCasosInicialAccionAdminFilter([]);
+                        setCasosInicialEstadoDeudaFilter([]);
+                      }}
+                      className={`rounded-xl border px-3 py-2 text-xs font-semibold transition ${darkMode ? "border-slate-600 bg-slate-900/70 text-slate-100 hover:bg-slate-800" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"}`}
+                    >
+                      Limpiar
+                    </button>
                   </div>
-                  <div>
-                    <label className={`mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Barrio</label>
-                    <select value={casosInicialBarrioFilter} onChange={(e) => setCasosInicialBarrioFilter(e.target.value)} className={`dashboard-select ${darkMode ? "dashboard-select-dark" : "dashboard-select-light"}`}>
-                      <option>Todos</option>
-                      {casosInicialRecuperacionFilterOptions.barrio.map((option) => <option key={option} value={option}>{option}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className={`mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Hallazgo</label>
-                    <select value={casosInicialHallazgoFilter} onChange={(e) => setCasosInicialHallazgoFilter(e.target.value)} className={`dashboard-select ${darkMode ? "dashboard-select-dark" : "dashboard-select-light"}`}>
-                      <option>Todos</option>
-                      {casosInicialRecuperacionFilterOptions.hallazgo.map((option) => <option key={option} value={option}>{option}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className={`mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Situación</label>
-                    <select value={casosInicialSituacionFilter} onChange={(e) => setCasosInicialSituacionFilter(e.target.value)} className={`dashboard-select ${darkMode ? "dashboard-select-dark" : "dashboard-select-light"}`}>
-                      <option>Todos</option>
-                      {casosInicialRecuperacionFilterOptions.situacion.map((option) => <option key={option} value={option}>{option}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className={`mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Acción administrativa</label>
-                    <select value={casosInicialAccionAdminFilter} onChange={(e) => setCasosInicialAccionAdminFilter(e.target.value)} className={`dashboard-select ${darkMode ? "dashboard-select-dark" : "dashboard-select-light"}`}>
-                      <option>Todos</option>
-                      {casosInicialRecuperacionFilterOptions.accion_administrativa.map((option) => <option key={option} value={option}>{option}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className={`mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Estado de deuda</label>
-                    <select value={casosInicialEstadoDeudaFilter} onChange={(e) => setCasosInicialEstadoDeudaFilter(e.target.value)} className={`dashboard-select ${darkMode ? "dashboard-select-dark" : "dashboard-select-light"}`}>
-                      <option>Todos</option>
-                      {casosInicialRecuperacionFilterOptions.estado_deuda.map((option) => <option key={option} value={option}>{option}</option>)}
-                    </select>
+                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    <MultiSelectFilter
+                      label="Localidad"
+                      options={casosInicialRecuperacionFilterOptions.localidad}
+                      selected={casosInicialLocalidadFilter}
+                      onChange={setCasosInicialLocalidadFilter}
+                      darkMode={darkMode}
+                    />
+                    <MultiSelectFilter
+                      label="Barrio"
+                      options={casosInicialRecuperacionFilterOptions.barrio}
+                      selected={casosInicialBarrioFilter}
+                      onChange={setCasosInicialBarrioFilter}
+                      darkMode={darkMode}
+                    />
+                    <MultiSelectFilter
+                      label="Hallazgo"
+                      options={casosInicialRecuperacionFilterOptions.hallazgo}
+                      selected={casosInicialHallazgoFilter}
+                      onChange={setCasosInicialHallazgoFilter}
+                      darkMode={darkMode}
+                    />
+                    <MultiSelectFilter
+                      label="Situación"
+                      options={casosInicialRecuperacionFilterOptions.situacion}
+                      selected={casosInicialSituacionFilter}
+                      onChange={setCasosInicialSituacionFilter}
+                      darkMode={darkMode}
+                    />
+                    <MultiSelectFilter
+                      label="Acción administrativa"
+                      options={casosInicialRecuperacionFilterOptions.accion_administrativa}
+                      selected={casosInicialAccionAdminFilter}
+                      onChange={setCasosInicialAccionAdminFilter}
+                      darkMode={darkMode}
+                    />
+                    <MultiSelectFilter
+                      label="Estado de deuda"
+                      options={casosInicialRecuperacionFilterOptions.estado_deuda}
+                      selected={casosInicialEstadoDeudaFilter}
+                      onChange={setCasosInicialEstadoDeudaFilter}
+                      darkMode={darkMode}
+                    />
                   </div>
                 </div>
               </div>
             </section>
 
-            <section className="grid gap-5 xl:grid-cols-[1.05fr_0.95fr_0.9fr]">
-              <div className="dashboard-panel"><MiniBarChart title="Hallazgos con mayor impacto" data={casosInicialHallazgoChart} darkMode={darkMode} allowWrapLabels /></div>
-              <div className="dashboard-panel"><MiniBarChart title="Estado de deuda y recuperación" data={casosInicialEstadoDeudaChart} darkMode={darkMode} allowWrapLabels /></div>
-              <div className="dashboard-panel"><MiniBarChart title="Bandas económicas" data={casosInicialRecuperacionBucketChart} darkMode={darkMode} allowWrapLabels /></div>
-            </section>
+            <section className="space-y-5">
+              <div className="flex items-end justify-between gap-4">
+                <div>
+                  <p className={`text-[11px] font-semibold uppercase tracking-[0.26em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Mapa ejecutivo</p>
+                  <h3 className={`mt-1 text-lg font-semibold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>Impacto económico, territorio y salida operativa</h3>
+                </div>
+                <div className={`hidden rounded-full border px-4 py-2 text-xs font-semibold md:block ${darkMode ? "border-slate-700 bg-slate-950/40 text-slate-300" : "border-slate-200 bg-white/85 text-slate-600"}`}>
+                  {casosInicialRutaPenalActivaCount} con ruta penal activa · {casosInicialActoSuspensionCount} con acto
+                </div>
+              </div>
 
-            <section className="grid gap-5 xl:grid-cols-[1.05fr_0.95fr_0.9fr]">
-              <div className="dashboard-panel"><MiniBarChart title="Territorio con mayor presión" data={casosInicialLocalidadChart} darkMode={darkMode} allowWrapLabels /></div>
-              <div className="dashboard-panel"><MiniBarChart title="Decisión administrativa" data={casosInicialAccionAdminChart} darkMode={darkMode} allowWrapLabels /></div>
-              <div className="dashboard-panel"><MiniBarChart title="Gestión penal y suspensión" data={casosInicialPenalChart} darkMode={darkMode} allowWrapLabels /></div>
-            </section>
+              <section className="grid gap-5 2xl:grid-cols-[1.18fr_0.92fr]">
+                <div className="dashboard-panel">
+                  <MiniBarChart title="Hallazgos con mayor impacto" data={casosInicialHallazgoChart} darkMode={darkMode} allowWrapLabels />
+                </div>
+                <div className="grid gap-5 md:grid-cols-2 2xl:grid-cols-1">
+                  <div className="dashboard-panel">
+                    <MiniBarChart title="Estado de deuda y recuperación" data={casosInicialEstadoDeudaChart} darkMode={darkMode} allowWrapLabels />
+                  </div>
+                  <div className="dashboard-panel">
+                    <MiniBarChart title="Bandas económicas" data={casosInicialRecuperacionBucketChart} darkMode={darkMode} allowWrapLabels />
+                  </div>
+                </div>
+              </section>
 
-            <section className="grid gap-5 xl:grid-cols-[1fr_1fr_0.8fr]">
-              <div className="dashboard-panel"><MiniBarChart title="Cómo se surte el predio" data={casosInicialSurtidoChart} darkMode={darkMode} allowWrapLabels /></div>
-              <div className="dashboard-panel"><MiniBarChart title="Acción operativa ejecutada" data={casosInicialAccionOperativaChart} darkMode={darkMode} allowWrapLabels /></div>
-              <div className="dashboard-panel"><MiniBarChart title="Acto de suspensión" data={casosInicialSuspensionChart} darkMode={darkMode} allowWrapLabels /></div>
+              <section className="grid gap-5 xl:grid-cols-[1.08fr_0.92fr]">
+                <div className="dashboard-panel">
+                  <MiniBarChart title="Territorio con mayor presión" data={casosInicialLocalidadChart} darkMode={darkMode} allowWrapLabels />
+                </div>
+                <div className="grid gap-5">
+                  <div className="dashboard-panel">
+                    <MiniBarChart title="Decisión administrativa" data={casosInicialAccionAdminChart} darkMode={darkMode} allowWrapLabels />
+                  </div>
+                  <div className="dashboard-panel">
+                    <MiniBarChart title="Gestión penal y suspensión" data={casosInicialPenalChart} darkMode={darkMode} allowWrapLabels />
+                  </div>
+                </div>
+              </section>
+
+              <section className="grid gap-5 xl:grid-cols-[1fr_1fr_0.8fr] xl:items-start">
+                <div className="dashboard-panel"><MiniBarChart title="Cómo se surte el predio" data={casosInicialSurtidoChart} darkMode={darkMode} allowWrapLabels /></div>
+                <div className="dashboard-panel"><MiniBarChart title="Acción operativa ejecutada" data={casosInicialAccionOperativaChart} darkMode={darkMode} allowWrapLabels /></div>
+                <div className="dashboard-panel"><MiniBarChart title="Acto de suspensión" data={casosInicialSuspensionChart} darkMode={darkMode} allowWrapLabels /></div>
+              </section>
             </section>
 
             <section className="grid gap-5 xl:grid-cols-[1.1fr_0.9fr]">
