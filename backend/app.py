@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import base64
 import os
@@ -149,20 +149,20 @@ def build_alerts_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame
     administrativo_required = [
         ("Cuenta Contrato", "Cuenta Contrato"),
         ("Interlocutor", "Interlocutor"),
-        ("Dirección", "Dirección"),
+        ("DirecciÃ³n", "DirecciÃ³n"),
         ("Ciudad", "Ciudad"),
         ("Responsable Administrativo", "Responsable"),
         ("Fecha de Vencimiento", "Fecha_Vencimiento"),
-        ("DÍAS", "Dias"),
+        ("DÃAS", "Dias"),
     ]
     penal_required = [
         ("Cuenta Contrato", "Cuenta Contrato"),
         ("Interlocutor", "Interlocutor"),
-        ("Dirección", "Dirección"),
+        ("DirecciÃ³n", "DirecciÃ³n"),
         ("Ciudad", "Ciudad"),
         ("Responsable Penal", "Responsable"),
         ("Fecha de Vencimiento.1", "Fecha_Vencimiento"),
-        ("DÍAS.1", "Dias"),
+        ("DÃAS.1", "Dias"),
     ]
 
     admin_df = build_block(
@@ -177,11 +177,11 @@ def build_alerts_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame
 
     cuenta_col = col(df, "Cuenta Contrato")
     interlocutor_col = col(df, "Interlocutor")
-    direccion_col = col(df, "Dirección")
+    direccion_col = col(df, "DirecciÃ³n")
     ciudad_col = col(df, "Ciudad")
     fecha_admin_col = col(df, "Fecha de Vencimiento")
-    dias_admin_col = col(df, "DÍAS")
-    liquidacion_col = col(df, "Liquidación")
+    dias_admin_col = col(df, "DÃAS")
+    liquidacion_col = col(df, "LiquidaciÃ³n")
     aviso_col = find_column([str(c) for c in df.columns], "Aviso_T2") or find_column(
         [str(c) for c in df.columns], "Aviso"
     )
@@ -195,7 +195,7 @@ def build_alerts_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame
     responsable_base.loc[mask_empty] = df[responsable_pen_col].loc[mask_empty]
 
     # Tablero de "Pendiente determinar procedencia":
-    # responsable sale de la columna Liquidación y aplica ventana de 45 dias.
+    # responsable sale de la columna Liquidación y aplica ventana de 60 días.
     estatus_col = col(df, "Estatus")
     estado_col = col(df, "Estado")
     estatus_norm = df[estatus_col].astype(str).str.strip().str.lower()
@@ -206,19 +206,19 @@ def build_alerts_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame
             "Aviso": df[aviso_col] if aviso_col else "",
             "Cuenta Contrato": df[cuenta_col],
             "Interlocutor": df[interlocutor_col],
-            "Dirección": df[direccion_col],
+            "DirecciÃ³n": df[direccion_col],
             "Ciudad": df[ciudad_col],
             "Responsable": df[liquidacion_col].astype(str).str.strip(),
             "Quien_Liquida": df[liquidacion_col].astype(str).str.strip(),
             "Fecha_Vencimiento": df[fecha_admin_col],
             "Dias": dias_admin,
             "Tipo": "Pendiente determinar procedencia",
-            "Regla": "Estatus pendiente determinar procedencia (<=45 dias)",
+            "Regla": "Estatus pendiente determinar procedencia (<=60 dias)",
             "Estatus": df[estatus_col].astype(str).str.strip(),
             "Estado": df[estado_col].astype(str).str.strip(),
         }
     )
-    proc_df = proc_df[proc_status_mask & (proc_df["Dias"] <= 45)].copy()
+    proc_df = proc_df[proc_status_mask & (proc_df["Dias"] <= 60)].copy()
     proc_df["Responsable"] = proc_df.apply(
         lambda row: build_responsable_label(row.get("Responsable"), row.get("Estado")), axis=1
     )
@@ -232,7 +232,7 @@ def build_alerts_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame
             "Aviso": df[aviso_col] if aviso_col else "",
             "Cuenta Contrato": df[cuenta_col],
             "Interlocutor": df[interlocutor_col],
-            "Dirección": df[direccion_col],
+            "DirecciÃ³n": df[direccion_col],
             "Ciudad": df[ciudad_col],
             "Responsable": responsable_base,
             "Quien_Liquida": df[liquidacion_col].astype(str).str.strip(),
@@ -437,12 +437,20 @@ def build_no_procedente_control_records(df: pd.DataFrame) -> list[dict[str, Any]
 
     responsable_col = (
         find_column([str(c) for c in df.columns], "Liquidación")
+        or find_column([str(c) for c in df.columns], "Liquidacion")
         or find_column([str(c) for c in df.columns], "LiquidaciÃ³n")
+        or find_column([str(c) for c in df.columns], "LiquidaciÃƒÂ³n")
         or find_column([str(c) for c in df.columns], "Liquidaci?n")
     )
     if responsable_col is None:
         raise ValueError("No se encontro la columna requerida: Liquidación")
-    fecha_col = col(df, "Fecha de Vencimiento")
+    fecha_col = (
+        find_column([str(c) for c in df.columns], "F. Vencimiento")
+        or find_column([str(c) for c in df.columns], "F.Vencimiento")
+        or find_column([str(c) for c in df.columns], "Fecha de Vencimiento")
+    )
+    if fecha_col is None:
+        raise ValueError("No se encontro la columna requerida: F. Vencimiento")
     estatus_col = col(df, "Estatus")
     estado_col = col(df, "Estado")
     aviso_col = find_column([str(c) for c in df.columns], "Aviso_T2")
@@ -653,8 +661,8 @@ def build_status_records(df: pd.DataFrame) -> list[dict[str, Any]]:
         ("Estado", "Estado"),
         ("Responsable Administrativo", "Responsable_Administrativo"),
         ("Responsable Penal", "Responsable_Penal"),
-        ("Liquidación", "Liquidacion"),
         ("LiquidaciÃ³n", "Liquidacion"),
+        ("LiquidaciÃƒÂ³n", "Liquidacion"),
         ("Fecha de Vencimiento", "Fecha_Vencimiento_Admin"),
         ("Fecha de Vencimiento.1", "Fecha_Vencimiento_Penal"),
     ]
@@ -772,11 +780,11 @@ def build_medidores_overview(df: pd.DataFrame) -> dict[str, Any]:
     cuenta_col = col(df, "Cuenta Contrato")
     medidor_col = col(df, "Medidor")
     diametro_col = find_column([str(c) for c in df.columns], "Diametro") or find_column(
-        [str(c) for c in df.columns], "Diámetro"
+        [str(c) for c in df.columns], "DiÃ¡metro"
     )
     lectura_col = find_column([str(c) for c in df.columns], "Lectura")
     retiro_col = find_column([str(c) for c in df.columns], "Retiro")
-    liquidacion_m3_col = find_column([str(c) for c in df.columns], "Liquidación en m3") or find_column(
+    liquidacion_m3_col = find_column([str(c) for c in df.columns], "LiquidaciÃ³n en m3") or find_column(
         [str(c) for c in df.columns], "Liquidacion en m3"
     )
 
@@ -939,7 +947,7 @@ def build_casos_inicial_recuperacion_payload(df: pd.DataFrame, target_sheet: str
     working_df = working_df.dropna(how="all").reset_index(drop=True)
 
     leading_fields = []
-    for candidate in ["N°", "Actividad económica", "Nombre", "Localidad", "Barrio"]:
+    for candidate in ["NÂ°", "Actividad econÃ³mica", "Nombre", "Localidad", "Barrio"]:
         found = find_column(columns=[str(c) for c in working_df.columns], target=candidate)
         if found:
             leading_fields.append(found)
@@ -948,8 +956,8 @@ def build_casos_inicial_recuperacion_payload(df: pd.DataFrame, target_sheet: str
 
     columns = [str(c) for c in working_df.columns]
     column_map = {
-        "N": find_column(columns, "N°") or find_column(columns, "No") or columns[0],
-        "Actividad economica": find_column(columns, "Actividad económica") or find_column(columns, "Actividad economica"),
+        "N": find_column(columns, "NÂ°") or find_column(columns, "No") or columns[0],
+        "Actividad economica": find_column(columns, "Actividad econÃ³mica") or find_column(columns, "Actividad economica"),
         "Nombre": find_column(columns, "Nombre"),
         "Direccion": find_column(columns, "Direccion") or find_column(columns, "Direccion"),
         "Localidad": find_column(columns, "Localidad"),
@@ -957,23 +965,23 @@ def build_casos_inicial_recuperacion_payload(df: pd.DataFrame, target_sheet: str
         "Cuenta contrato": find_column(columns, "Cuenta contrato") or find_column(columns, "Cuenta Contrato"),
         "Aviso": find_column(columns, "Aviso"),
         "Fecha": find_column(columns, "Fecha"),
-        "Lectura intervencion m3": find_column(columns, "Lectura día de la intervención (m3)") or find_column(columns, "Lectura dia de la intervencion (m3)"),
+        "Lectura intervencion m3": find_column(columns, "Lectura dÃ­a de la intervenciÃ³n (m3)") or find_column(columns, "Lectura dia de la intervencion (m3)"),
         "Personal visita": find_column(columns, "Personal de la visita"),
         "Hallazgos encontrados": find_column(columns, "Hallazgos encontrados"),
         "Deuda 2025": find_column(columns, "Deuda 2025") or find_column(columns, "Deuda  2025"),
-        "Ultima lectura": find_column(columns, "Última lectura después del procedimiento") or find_column(columns, "Ultima lectura despues del procedimiento"),
-        "Situacion predio": find_column(columns, "Situación actual del predio") or find_column(columns, "Situacion actual del predio"),
-        "Surtido predio": find_column(columns, "¿Cómo se surte de agua el predio? 24 enero 2025") or find_column(columns, "Como se surte de agua el predio? 24 enero 2025"),
+        "Ultima lectura": find_column(columns, "Ãšltima lectura despuÃ©s del procedimiento") or find_column(columns, "Ultima lectura despues del procedimiento"),
+        "Situacion predio": find_column(columns, "SituaciÃ³n actual del predio") or find_column(columns, "Situacion actual del predio"),
+        "Surtido predio": find_column(columns, "Â¿CÃ³mo se surte de agua el predio? 24 enero 2025") or find_column(columns, "Como se surte de agua el predio? 24 enero 2025"),
         "Volumen recuperado": find_column(columns, "Volumen recuperado (m3)") or find_column(columns, "Volumen recuperado o (m3)"),
         "Valor recuperado": find_column(columns, "Valor recuperado (COP)"),
         "Estado deuda": find_column(columns, "Estado de la deuda (en mora, pagada, financiada)"),
-        "Liquidacion m3": find_column(columns, "Liquidación en m3") or find_column(columns, "Liquidacion en m3"),
-        "Liquidacion $": find_column(columns, "Liquidación en $") or find_column(columns, "Liquidacion en $"),
-        "Accion operativa": find_column(columns, "Acción operativa") or find_column(columns, "Accion operativa"),
-        "Accion administrativa": find_column(columns, "Acción administrativa") or find_column(columns, "Accion administrativa"),
-        "Accion penal": find_column(columns, "Acción penal") or find_column(columns, "Accion penal"),
+        "Liquidacion m3": find_column(columns, "LiquidaciÃ³n en m3") or find_column(columns, "Liquidacion en m3"),
+        "Liquidacion $": find_column(columns, "LiquidaciÃ³n en $") or find_column(columns, "Liquidacion en $"),
+        "Accion operativa": find_column(columns, "AcciÃ³n operativa") or find_column(columns, "Accion operativa"),
+        "Accion administrativa": find_column(columns, "AcciÃ³n administrativa") or find_column(columns, "Accion administrativa"),
+        "Accion penal": find_column(columns, "AcciÃ³n penal") or find_column(columns, "Accion penal"),
         "Observaciones": find_column(columns, "Observaciones"),
-        "Acto de suspension": find_column(columns, "Acto de suspensión") or find_column(columns, "Acto de suspension"),
+        "Acto de suspension": find_column(columns, "Acto de suspensiÃ³n") or find_column(columns, "Acto de suspension"),
         "Avisos reincidencia": find_column(columns, "Aviso(s) reincidencia") or find_column(columns, "Avisos reincidencia"),
         "Observaciones reincidencia": find_column(columns, "Observaciones reincidencia"),
     }
@@ -1143,11 +1151,11 @@ def build_casos_especiales_payload(df: pd.DataFrame, target_sheet: str, availabl
     columns = [str(c) for c in df.columns]
 
     base_map = {
-        "N°": find_column(columns, "N°") or find_column(columns, "No") or find_column(columns, "N"),
-        "Intervención": find_column(columns, "Intervención") or find_column(columns, "Intervencion"),
+        "NÂ°": find_column(columns, "NÂ°") or find_column(columns, "No") or find_column(columns, "N"),
+        "IntervenciÃ³n": find_column(columns, "IntervenciÃ³n") or find_column(columns, "Intervencion"),
         "Zona": find_column(columns, "Zona"),
-        "Porción": find_column(columns, "Porción") or find_column(columns, "Porcion"),
-        "Dirección": find_column(columns, "Dirección") or find_column(columns, "Direccion"),
+        "PorciÃ³n": find_column(columns, "PorciÃ³n") or find_column(columns, "Porcion"),
+        "DirecciÃ³n": find_column(columns, "DirecciÃ³n") or find_column(columns, "Direccion"),
         "Localidad": find_column(columns, "Localidad"),
         "Barrio": find_column(columns, "Barrio"),
         "Cuenta contrato": find_column(columns, "Cuenta contrato") or find_column(columns, "Cuenta Contrato"),
@@ -1188,7 +1196,7 @@ def build_casos_especiales_payload(df: pd.DataFrame, target_sheet: str, availabl
             track = {
                 "Seguimiento": seguimiento_value,
                 "Resultado": resultado_value,
-                "Observación": observacion_value,
+                "ObservaciÃ³n": observacion_value,
             }
             seguimientos.append(track)
             seguimiento_records.append(
@@ -1197,15 +1205,15 @@ def build_casos_especiales_payload(df: pd.DataFrame, target_sheet: str, availabl
                     "Localidad": base_record["Localidad"],
                     "Barrio": base_record["Barrio"],
                     "Hallazgo encontrado": base_record["Hallazgo encontrado"],
-                    "Intervención": base_record["Intervención"],
+                    "IntervenciÃ³n": base_record["IntervenciÃ³n"],
                     "Cuenta contrato": base_record["Cuenta contrato"],
                     "Resultado": resultado_value,
-                    "Observación": observacion_value,
+                    "ObservaciÃ³n": observacion_value,
                 }
             )
 
         ultimo_resultado = next((item["Resultado"] for item in reversed(seguimientos) if item["Resultado"]), "")
-        ultima_observacion = next((item["Observación"] for item in reversed(seguimientos) if item["Observación"]), "")
+        ultima_observacion = next((item["ObservaciÃ³n"] for item in reversed(seguimientos) if item["ObservaciÃ³n"]), "")
 
         case_records.append(
             {
@@ -1524,5 +1532,6 @@ def sharepoint_diagnostic(sharepoint_url: str = Form(...)) -> dict[str, Any]:
         result["download_ok"] = False
         result["download_error"] = str(exc)
     return result
+
 
 

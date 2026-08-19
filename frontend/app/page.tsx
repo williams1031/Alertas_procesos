@@ -397,12 +397,14 @@ function BoardTable({
   board,
   darkMode,
   onDownloadSummary,
-  downloadingSummary = false
+  downloadingSummary = false,
+  extraControls
 }: {
   board: BoardData;
   darkMode: boolean;
   onDownloadSummary?: () => void;
   downloadingSummary?: boolean;
+  extraControls?: ReactNode;
 }) {
   const [showHelp, setShowHelp] = useState(false);
   const [captureMessage, setCaptureMessage] = useState<string | null>(null);
@@ -529,6 +531,7 @@ function BoardTable({
           <p className={`text-[11px] font-semibold uppercase tracking-[0.28em] ${accentStyles.eyebrow}`}>Tablero operativo</p>
           <h2 className={`mt-2 text-xl font-semibold tracking-tight ${darkMode ? "text-slate-50" : "text-slate-900"}`}>{board.title}</h2>
           <p className={`mt-2 max-w-3xl text-sm leading-6 ${darkMode ? "text-slate-400" : "text-slate-600"}`}>{board.description}</p>
+          {extraControls && <div className="mt-3">{extraControls}</div>}
         </div>
         <div className="flex items-center gap-2">
           {onDownloadSummary && (
@@ -873,6 +876,7 @@ export default function HomePage() {
   const [casosInicialSituacionFilter, setCasosInicialSituacionFilter] = useState<string[]>([]);
   const [casosInicialAccionAdminFilter, setCasosInicialAccionAdminFilter] = useState<string[]>([]);
   const [casosInicialEstadoDeudaFilter, setCasosInicialEstadoDeudaFilter] = useState<string[]>([]);
+  const [noProcedenteThreshold, setNoProcedenteThreshold] = useState(60);
 
   useEffect(() => {
     const enabled = window.localStorage.getItem("dark_mode") === "1";
@@ -1298,13 +1302,13 @@ export default function HomePage() {
       buildBoardFromRecords(
         filteredNoProcedenteRecords,
         "Tablero de Pendiente Determinar Procedencia",
-        "Solo muestra registros con Estatus Pendiente determinar procedencia. La asignación sale de la columna Liquidación y los días se calculan desde la fecha actual contra Fecha de Vencimiento.",
+        `Solo muestra registros con Estatus Pendiente determinar procedencia. La asignación sale de la columna Liquidación y los días se calculan desde la fecha actual contra Fecha de Vencimiento. Los vencidos se cuentan después de ${noProcedenteThreshold} días.`,
         "Liquidación",
         "rose",
-        60,
-        45
+        noProcedenteThreshold,
+        noProcedenteThreshold
       ),
-    [filteredNoProcedenteRecords]
+    [filteredNoProcedenteRecords, noProcedenteThreshold]
   );
 
   const filteredChartRecords = useMemo(() => {
@@ -2250,6 +2254,24 @@ export default function HomePage() {
             darkMode={darkMode}
             onDownloadSummary={() => downloadBoardSummary(filteredNoProcedenteRecords, "Liquidación", "resumen_pendiente_determinar_procedencia.xlsx")}
             downloadingSummary={exportingReport}
+            extraControls={
+              <div className="flex flex-wrap items-center gap-3">
+                <span className={`text-xs font-semibold uppercase tracking-[0.22em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                  Comparar vencidos a
+                </span>
+                <select
+                  value={String(noProcedenteThreshold)}
+                  onChange={(event) => setNoProcedenteThreshold(Number(event.target.value))}
+                  className={`rounded-xl border px-3 py-2 text-sm font-medium ${darkMode ? "border-slate-700 bg-slate-900/80 text-slate-100" : "border-slate-300 bg-white/90 text-slate-800"}`}
+                >
+                  {[30, 35, 40, 45, 50, 55, 60, 65, 70].map((day) => (
+                    <option key={day} value={day}>
+                      {day} días
+                    </option>
+                  ))}
+                </select>
+              </div>
+            }
           />
         </div>
       )}
@@ -2979,3 +3001,4 @@ function MedidoresLiquidacionCard({
     </section>
   );
 }
+
