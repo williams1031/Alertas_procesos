@@ -1264,7 +1264,7 @@ export default function HomePage() {
       buildBoardFromRecords(
         filteredAdminRecords,
         "Tablero de Responsables Administrativos",
-        "Solo muestra pendientes con Estatus que contengan para expediente o para administrativo, incluyendo mixtos. Si el responsable viene vacio, se marca como Pendiente por asignar.",
+        "Solo muestra pendientes con Estado que contenga para expediente o para administrativo, incluyendo mixtos. Si el responsable viene vacio, se marca como Pendiente por asignar.",
         "Responsable Administrativo",
         "teal",
         45,
@@ -1278,7 +1278,7 @@ export default function HomePage() {
       buildBoardFromRecords(
         filteredPenalRecords,
         "Tablero de Responsables Penales",
-        "Solo muestra pendientes con Estatus que contengan para expediente o para administrativo, incluyendo mixtos. Si el responsable viene vacio, se marca como Pendiente por asignar.",
+        "Solo muestra pendientes con Estado que contenga para expediente o para administrativo, incluyendo mixtos. Si el responsable viene vacio, se marca como Pendiente por asignar.",
         "Responsable Penal",
         "amber",
         45,
@@ -1302,7 +1302,7 @@ export default function HomePage() {
       buildBoardFromRecords(
         filteredNoProcedenteRecords,
         "Tablero de Pendiente Determinar Procedencia",
-        `Solo muestra registros con Estatus Pendiente determinar procedencia. La asignación sale de la columna Liquidación y los días se calculan desde la fecha actual contra Fecha de Vencimiento. Los vencidos se cuentan después de ${noProcedenteThreshold} días.`,
+        `Solo muestra registros con Estatus Pendiente determinar procedencia. La asignación sale de la columna Liquidación y los días se calculan con relación a la columna Fecha_Anomalía. Los vencidos se cuentan después de ${noProcedenteThreshold} días.`,
         "Liquidación",
         "rose",
         noProcedenteThreshold,
@@ -3001,4 +3001,6 @@ function MedidoresLiquidacionCard({
     </section>
   );
 }
+
+
 

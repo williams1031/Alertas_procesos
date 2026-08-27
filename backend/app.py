@@ -445,12 +445,15 @@ def build_no_procedente_control_records(df: pd.DataFrame) -> list[dict[str, Any]
     if responsable_col is None:
         raise ValueError("No se encontro la columna requerida: Liquidación")
     fecha_col = (
-        find_column([str(c) for c in df.columns], "F. Vencimiento")
-        or find_column([str(c) for c in df.columns], "F.Vencimiento")
-        or find_column([str(c) for c in df.columns], "Fecha de Vencimiento")
+        find_column([str(c) for c in df.columns], "Fecha_Anomalia")
+        or find_column([str(c) for c in df.columns], "Fecha Anomalia")
+        or find_column([str(c) for c in df.columns], "Fecha_Anomalía")
+        or find_column([str(c) for c in df.columns], "Fecha Anomalía")
+        or find_column([str(c) for c in df.columns], "Fecha de Anomalia")
+        or find_column([str(c) for c in df.columns], "Fecha de Anomalía")
     )
     if fecha_col is None:
-        raise ValueError("No se encontro la columna requerida: F. Vencimiento")
+        raise ValueError("No se encontro la columna requerida: Fecha_Anomalía")
     estatus_col = col(df, "Estatus")
     estado_col = col(df, "Estado")
     aviso_col = find_column([str(c) for c in df.columns], "Aviso_T2")
@@ -477,7 +480,7 @@ def build_no_procedente_control_records(df: pd.DataFrame) -> list[dict[str, Any]
         return []
 
     today = pd.Timestamp(date.today())
-    work["DiasInt"] = (work["Fecha_Vencimiento"] - today).dt.days.astype(int)
+    work["DiasInt"] = (today - work["Fecha_Vencimiento"]).dt.days.astype(int)
     work["Responsable"] = work["Responsable"].fillna("").astype(str).str.strip()
     work.loc[work["Responsable"].apply(is_unassigned_value), "Responsable"] = "Pendiente por asignar"
     work["Estatus"] = work["Estatus"].fillna("").astype(str).str.strip()
@@ -1532,6 +1535,8 @@ def sharepoint_diagnostic(sharepoint_url: str = Form(...)) -> dict[str, Any]:
         result["download_ok"] = False
         result["download_error"] = str(exc)
     return result
+
+
 
 
 
