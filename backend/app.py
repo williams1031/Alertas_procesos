@@ -370,7 +370,7 @@ def build_pending_control_records(
     fecha_col = col(df, fecha_column)
     dias_col = col(df, dias_column)
     estatus_col = col(df, "Estatus")
-    estado_col = col(df, "Estado")
+    estado_col = find_column([str(c) for c in df.columns], "Estado")
     aviso_col = find_column([str(c) for c in df.columns], "Aviso_T2")
     fecha_aviso_col = find_column([str(c) for c in df.columns], "Fecha_Aviso")
     cuenta_col = find_column([str(c) for c in df.columns], "Cuenta Contrato")
@@ -382,7 +382,7 @@ def build_pending_control_records(
             "Fecha_Vencimiento": df[fecha_col],
             "Dias": pd.to_numeric(df[dias_col], errors="coerce"),
             "Estatus": df[estatus_col],
-            "Estado": df[estado_col],
+            "Estado": df[estado_col] if estado_col else "",
             "Aviso_T2": df[aviso_col] if aviso_col else "",
             "Fecha_Aviso": df[fecha_aviso_col] if fecha_aviso_col else "",
             "Cuenta Contrato": df[cuenta_col] if cuenta_col else "",
