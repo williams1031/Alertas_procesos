@@ -390,7 +390,12 @@ def build_pending_control_records(
         }
     )
     estatus_norm = work["Estatus"].fillna("").astype(str).apply(normalize_text)
-    pending_mask = estatus_norm.str.contains("para expediente", na=False) | estatus_norm.str.contains("para administrativo", na=False)
+    # Incluye variantes singulares/plurales y combinadas, por ejemplo:
+    # "Para administrativos/En revisión".
+    pending_mask = (
+        estatus_norm.str.contains(r"\bpara expediente\b", regex=True, na=False)
+        | estatus_norm.str.contains(r"\bpara administrativ(?:o|os)\b", regex=True, na=False)
+    )
     work = work[pending_mask].copy()
     work = work[work["Dias"].notna()].copy()
     if work.empty:
