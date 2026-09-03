@@ -362,6 +362,7 @@ def build_pending_control_records(
     responsable_column: str,
     fecha_column: str,
     dias_column: str,
+    allowed_estatus: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     if df.empty:
         return []
@@ -390,12 +391,14 @@ def build_pending_control_records(
         }
     )
     estatus_norm = work["Estatus"].fillna("").astype(str).apply(normalize_text)
-    # Incluye variantes singulares/plurales y combinadas, por ejemplo:
-    # "Para administrativos/En revisión".
-    pending_mask = (
-        estatus_norm.str.contains(r"\bpara expediente\b", regex=True, na=False)
-        | estatus_norm.str.contains(r"\bpara administrativ(?:o|os)\b", regex=True, na=False)
-    )
+    if allowed_estatus:
+        allowed_estatus_norm = {normalize_text(value) for value in allowed_estatus}
+        pending_mask = estatus_norm.isin(allowed_estatus_norm)
+    else:
+        pending_mask = (
+            estatus_norm.str.contains(r"\bpara expediente\b", regex=True, na=False)
+            | estatus_norm.str.contains(r"\bpara administrativ(?:o|os)\b", regex=True, na=False)
+        )
     work = work[pending_mask].copy()
     work = work[work["Dias"].notna()].copy()
     if work.empty:
@@ -424,6 +427,11 @@ def build_admin_control_records(df: pd.DataFrame) -> list[dict[str, Any]]:
         responsable_column="Responsable Administrativo",
         fecha_column="Fecha de Vencimiento",
         dias_column="D\u00cdAS",
+        allowed_estatus={
+            "Para administrativo",
+            "Para administrativo/Fiscalía",
+            "Para administrativo/Para expediente",
+        },
     )
 
 
@@ -433,6 +441,11 @@ def build_penal_control_records(df: pd.DataFrame) -> list[dict[str, Any]]:
         responsable_column="Responsable Penal",
         fecha_column="Fecha de Vencimiento.1",
         dias_column="D\u00cdAS.1",
+        allowed_estatus={
+            "Para administrativo/Para expediente",
+            "Para expediente",
+            "Para facturar/Para expediente",
+        },
     )
 
 
