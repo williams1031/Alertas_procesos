@@ -390,6 +390,12 @@ def build_pending_control_records(
             "Anomalia_Visitada": df[anomalia_col] if anomalia_col else "",
         }
     )
+    # La base actual usa DÍAS/DÍAS.1 como estado textual (por ejemplo,
+    # "Gestionado"). Cuando no hay un número válido, los días restantes se
+    # calculan desde la fecha de vencimiento, que es la fuente confiable.
+    fechas_vencimiento = pd.to_datetime(work["Fecha_Vencimiento"], errors="coerce")
+    dias_calculados = (fechas_vencimiento.dt.normalize() - pd.Timestamp(date.today())).dt.days
+    work["Dias"] = work["Dias"].where(work["Dias"].notna(), dias_calculados)
     estatus_norm = work["Estatus"].fillna("").astype(str).apply(normalize_text)
     if allowed_estatus:
         allowed_estatus_norm = {normalize_text(value) for value in allowed_estatus}
