@@ -265,7 +265,8 @@ function buildBoardFromRecords(
   rowLabel = "Responsable",
   accent: BoardData["accent"] = "teal",
   warningAfter: number | null = null,
-  overdueAfter: number | null = null
+  overdueAfter: number | null = null,
+  showAllDayColumns = false
 ): BoardData {
   if (!records.length) {
     return {
@@ -287,7 +288,9 @@ function buildBoardFromRecords(
     .filter((day) => Number.isFinite(day))
     .filter((day) => day >= 0)
     .filter((day) => overdueAfter === null || day <= overdueAfter);
-  const dayColumns = compactDayColumns(visibleDayValues);
+  const dayColumns = showAllDayColumns
+    ? Array.from(new Set(visibleDayValues)).sort((a, b) => a - b)
+    : compactDayColumns(visibleDayValues);
   const grouped = new Map<string, { Responsable: string; DiasInt: number }[]>();
   for (const row of records) {
     const key = row.Responsable || "Sin responsable";
@@ -1268,7 +1271,8 @@ export default function HomePage() {
         "Responsable Administrativo",
         "teal",
         45,
-        null
+        null,
+        true
       ),
     [filteredAdminRecords]
   );
@@ -1282,7 +1286,8 @@ export default function HomePage() {
         "Responsable Penal",
         "amber",
         45,
-        null
+        null,
+        true
       ),
     [filteredPenalRecords]
   );
