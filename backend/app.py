@@ -2,6 +2,7 @@
 
 import base64
 import os
+import re
 import time
 import unicodedata
 from datetime import date
@@ -363,6 +364,8 @@ def build_pending_control_records(
     fecha_column: str,
     dias_column: str,
     allowed_estatus: set[str] | None = None,
+    required_estatus_terms: set[str] | None = None,
+    required_estatus_any_terms: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     if df.empty:
         return []
@@ -397,7 +400,17 @@ def build_pending_control_records(
     dias_calculados = (fechas_vencimiento.dt.normalize() - pd.Timestamp(date.today())).dt.days
     work["Dias"] = work["Dias"].where(work["Dias"].notna(), dias_calculados)
     estatus_norm = work["Estatus"].fillna("").astype(str).apply(normalize_text)
-    if allowed_estatus:
+    if required_estatus_terms or required_estatus_any_terms:
+        pending_mask = pd.Series(True, index=work.index)
+        for term in {normalize_text(value) for value in required_estatus_terms or set()}:
+            pending_mask &= estatus_norm.str.contains(rf"\b{re.escape(term)}\b", regex=True, na=False)
+        if required_estatus_any_terms:
+            any_terms_norm = {normalize_text(value) for value in required_estatus_any_terms}
+            any_term_mask = pd.Series(False, index=work.index)
+            for term in any_terms_norm:
+                any_term_mask |= estatus_norm.str.contains(rf"\b{re.escape(term)}\b", regex=True, na=False)
+            pending_mask &= any_term_mask
+    elif allowed_estatus:
         allowed_estatus_norm = {normalize_text(value) for value in allowed_estatus}
         pending_mask = estatus_norm.isin(allowed_estatus_norm)
     else:
@@ -433,11 +446,7 @@ def build_admin_control_records(df: pd.DataFrame) -> list[dict[str, Any]]:
         responsable_column="Responsable Administrativo",
         fecha_column="Fecha de Vencimiento",
         dias_column="D\u00cdAS",
-        allowed_estatus={
-            "Para administrativo",
-            "Para administrativo/Fiscalía",
-            "Para administrativo/Para expediente",
-        },
+        required_estatus_terms={"para administrativo"},
     )
 
 
@@ -447,11 +456,7 @@ def build_penal_control_records(df: pd.DataFrame) -> list[dict[str, Any]]:
         responsable_column="Responsable Penal",
         fecha_column="Fecha de Vencimiento.1",
         dias_column="D\u00cdAS.1",
-        allowed_estatus={
-            "Para administrativo/Para expediente",
-            "Para expediente",
-            "Para facturar/Para expediente",
-        },
+        required_estatus_any_terms={"para expediente", "para penal"},
     )
 
 
@@ -786,12 +791,16 @@ def extract_filter_options(df: pd.DataFrame, column_name: str) -> list[str]:
 def build_chart_records(df: pd.DataFrame) -> list[dict[str, str]]:
     estatus_col = col(df, "Estatus")
     estado_col = col(df, "Estado")
-    observaciones_col = col(df, "Observaciones")
+    observaciones_col = find_column([str(column) for column in df.columns], "Observaciones")
     work = pd.DataFrame(
         {
             "Estatus": df[estatus_col].fillna("").astype(str).str.strip(),
             "Estado": df[estado_col].fillna("").astype(str).str.strip(),
-            "Observaciones": df[observaciones_col].fillna("").astype(str).str.strip(),
+            "Observaciones": (
+                df[observaciones_col].fillna("").astype(str).str.strip()
+                if observaciones_col
+                else pd.Series("", index=df.index)
+            ),
         }
     )
     return work.to_dict(orient="records")

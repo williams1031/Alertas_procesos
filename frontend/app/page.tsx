@@ -193,15 +193,6 @@ type ChartPoint = {
 type BaseMode = "administrativa" | "medidores" | "casos_especiales";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-const DEFAULT_ADMIN_ESTATUS = [
-  "Para administrativo",
-  "Para administrativo/Para expediente",
-  "Para administrativo/Penal"
-];
-const DEFAULT_PENAL_ESTATUS = [
-  "Para administrativo/Para expediente",
-  "Para expediente"
-];
 const DEFAULT_SHEET_BY_MODE: Record<BaseMode, string> = {
   administrativa: "Procesos Adminis_Penal",
   medidores: "Acueducto",
@@ -1228,10 +1219,9 @@ export default function HomePage() {
 
   const filteredAdminRecords = useMemo(() => {
     return adminRecords.filter((row) => {
-      const matchesDefaultAdmin = DEFAULT_ADMIN_ESTATUS.some(
-        (item) => normalizeForSearch(item) === normalizeForSearch(row.Estatus)
-      );
-      if (!matchesDefaultAdmin) return false;
+      const normalizedEstatus = normalizeForSearch(row.Estatus);
+      const matchesAdminRule = /\bpara administrativo\b/.test(normalizedEstatus);
+      if (!matchesAdminRule) return false;
       if (
         filterEstatus.length > 0 &&
         !filterEstatus.some((item) => normalizeForSearch(item) === normalizeForSearch(row.Estatus))
@@ -1246,10 +1236,9 @@ export default function HomePage() {
 
   const filteredPenalRecords = useMemo(() => {
     return penalRecords.filter((row) => {
-      const matchesDefaultPenal = DEFAULT_PENAL_ESTATUS.some(
-        (item) => normalizeForSearch(item) === normalizeForSearch(row.Estatus)
-      );
-      if (!matchesDefaultPenal) return false;
+      const normalizedEstatus = normalizeForSearch(row.Estatus);
+      const matchesPenalRule = /\bpara expediente\b/.test(normalizedEstatus) || /\bpara penal\b/.test(normalizedEstatus);
+      if (!matchesPenalRule) return false;
       if (
         filterEstatus.length > 0 &&
         !filterEstatus.some((item) => normalizeForSearch(item) === normalizeForSearch(row.Estatus))
